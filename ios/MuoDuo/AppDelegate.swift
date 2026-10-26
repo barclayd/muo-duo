@@ -34,10 +34,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         [.banner, .list, .sound]
     }
 
-    // Stock alerts carry the product page URL; tapping one goes straight to it.
+    // Stock alerts carry the product page URL; tapping one goes straight to it in the Apple Store app.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         guard let link = response.notification.request.content.userInfo["url"] as? String,
               let url = URL(string: link) else { return }
-        await MainActor.run { UIApplication.shared.open(url) }
+        await AppleStore.open(url)
     }
 }

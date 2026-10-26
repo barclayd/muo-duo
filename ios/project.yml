@@ -17,13 +17,20 @@ targets:
   MuoDuo:
     type: application
     platform: iOS
-    sources: [MuoDuo]
+    sources:
+      - path: MuoDuo
+        excludes: [AppIcon.icon]
+      # An Icon Composer bundle, so one file rather than a folder of SVGs.
+      - path: MuoDuo/AppIcon.icon
+        type: file
+        buildPhase: resources
     configFiles:
       Debug: Config/App.xcconfig
       Release: Config/App.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.barclayd.muoduo
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
     entitlements:
       path: MuoDuo/MuoDuo.entitlements

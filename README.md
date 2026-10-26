@@ -3,7 +3,7 @@
 Push notifications to my iPhone the moment an iPhone Duo is available for pickup at any Apple Store in London, the south of England or Manchester.
 
 - **`worker/`**: a Cloudflare Worker with one Durable Object that polls Apple's pickup endpoint for 22 stores in three areas, one request a second, and sends APNs pushes.
-- **`ios/`**: a SwiftUI app with a Liquid Glass design. It shows the checker working live, when an iPhone Duo was last in stock and where, a map of the stores being watched, and which models alert you. Tapping an alert opens the product page.
+- **`ios/`**: a SwiftUI app with a Liquid Glass design. It shows the checker working live, when an iPhone Duo was last in stock and where, a map of the stores being watched, and which models alert you. Tapping an alert, or Buy in the app, opens the model in the Apple Store app.
 
 ## How it works
 
@@ -38,8 +38,10 @@ Durable Object alarm (about once a second: 3 areas × 4 colour/capacity queries,
 The Worker does all the checking; the app only watches it, polling `/status` every 2 seconds while it's on screen.
 
 - **Live.** The Worker's last 30 requests to Apple are in `/status`. The app replays new ones at the pace they happened, so every check pulses: rings spread out from behind the phone, the toolbar badge ripples, the area's pins ripple on the map, and the ticker along the bottom names the area and model just checked.
+- **In stock.** When anything is in stock, a green card appears straight under the colour picker: the capacity and colour, each store that has it and how long it's been there, and a Buy button. Apple's product pages are universal links for the Apple Store app, so Buy opens the model there, already chosen; pick the store for pickup at checkout, since no link can choose it for you. Safari is the fallback if the app isn't installed.
 - **Product images.** The hero shows Apple's own product shot for the selected colour, and the whole app takes that colour's look: Night Sky is the dusk desert from its wallpaper, with stars, Star White the dawn one. The images load from Apple's CDN at runtime and are cached on the device; they aren't in this repo.
 - **Liquid Glass.** Cards, colour and capacity pickers, the ticker, the toolbar and the full-screen store map's chips and store panel are all glass over a slowly drifting mesh-gradient sky.
+- **Warnings.** If the checker can't reach Apple or the results look stale, a banner says so at the top, since alerts may not arrive. A slow-down after Apple pushes back is less urgent, so it sits at the bottom.
 - **Settings** has pause, the current pace, notification registration and a test push, and the areas and stores being watched.
 
 ## Setup

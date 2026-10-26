@@ -33,11 +33,14 @@ struct LiveBadge: View {
                 LiveDot(color: state.color, trigger: pulses)
                 Text(state.badge).font(.footnote.weight(.bold)).tracking(0.8)
                 if let lastCheck, state != .paused {
-                    Text(ago(lastCheck, now: context.date))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
+                    // Sized for the longest label, so going from "now" to "2s ago" doesn't resize the toolbar.
+                    ZStack(alignment: .leading) {
+                        Text("00m ago").hidden()
+                        Text(ago(lastCheck, now: context.date)).contentTransition(.numericText())
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
                 }
             }
             .padding(.horizontal, 6)

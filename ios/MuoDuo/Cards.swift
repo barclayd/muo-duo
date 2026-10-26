@@ -32,104 +32,222 @@ struct CardHeader: View {
 
 // MARK: - Health
 
-/// Only shown when something's wrong, so the home screen stays calm when it isn't.
+/// Only shown when the checker can't be trusted, so the home screen stays calm when it can.
 struct HealthBanner: View {
     let status: Status
     let errorMessage: String?
 
     var body: some View {
-        if let problem {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: problem.symbol)
-                    .font(.title2)
-                    .foregroundStyle(problem.color)
-                    .symbolEffect(.pulse, options: .repeating)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(problem.title).font(.headline)
-                    Text(problem.detail).font(.subheadline).foregroundStyle(.secondary)
-                }
-            }
-            .card(tint: problem.color)
-            .transition(.blurReplace)
-        }
-    }
-
-    private var problem: (title: String, detail: String, symbol: String, color: Color)? {
         if let errorMessage {
-            return ("Can't reach the checker", errorMessage, "wifi.exclamationmark", .orange)
-        }
-        switch status.state {
-        case .live, .paused:
-            return nil
-        case let .failing(error):
-            return ("Apple isn't answering", error ?? "The last \(status.health.consecutiveFailures) checks failed.", "exclamationmark.triangle.fill", .orange)
-        case .stale:
-            return ("Results may be stale", "Apple is answering, but even iPhone 17 shows no stock nearby.", "questionmark.circle.fill", .yellow)
-        case let .slowed(reason):
-            return ("Slowed to every \(status.pace.intervalSeconds)s", "\(reason). Speeds back up after 30 minutes without pushback.", "tortoise.fill", .yellow)
+            Notice(title: "Can't reach the checker", detail: errorMessage, symbol: "wifi.exclamationmark", color: .orange)
+        } else if case let .failing(error) = status.state {
+            Notice(title: "Apple isn't answering", detail: error ?? "The last \(status.health.consecutiveFailures) checks failed.", symbol: "exclamationmark.triangle.fill", color: .orange)
+        } else if status.state == .stale {
+            Notice(title: "Results may be stale", detail: "Apple is answering, but even iPhone 17 shows no stock nearby.", symbol: "questionmark.circle.fill", color: .yellow)
         }
     }
 }
 
-// MARK: - Stock
+/// Apple pushed back, so checks are slower for a couple of minutes. Worth knowing but not urgent, so it
+/// sits at the bottom of the home screen.
+struct SlowedBanner: View {
+    let status: Status
 
-/// What's in stock right now, or failing that when an iPhone Duo was last seen in a store.
-struct StockCard: View {
+    var body: some View {
+        if case let .slowed(reason) = status.state {
+            Notice(title: "Slowed to every \(status.pace.intervalSeconds)s", detail: "\(reason). Speeds up again after 2 minutes without pushback.", symbol: "tortoise.fill", color: .yellow)
+        }
+    }
+}
+
+private struct Notice: View {
+    let title: String
+    let detail: String
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: symbol)
+                .font(.title2)
+                .foregroundStyle(color)
+                .symbolEffect(.pulse, options: .repeating)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.headline)
+                Text(detail).font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .card(tint: color)
+        .transition(.blurReplace)
+    }
+}
+
+// MARK: - In stock
+
+/// Straight under the colour picker the moment anything is in stock: which size and colour, at which
+/// stores, and one tap to buy it in the Apple Store app.
+struct InStockCard: View {
+    let model: StatusModel
+    let status: Status
+    let finish: Finish
+
+    var body: some View {
+        if !status.sightings.isEmpty {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 8) {
+                    LiveDot(color: .green, trigger: model.pulses, size: 9)
+                    Text("In stock now").font(.footnote.weight(.bold)).textCase(.uppercase).tracking(0.8)
+                    Spacer()
+                    Text(storeCount).font(.footnote.weight(.semibold))
+                }
+                .foregroundStyle(.green)
+
+                ForEach(Array(groups.enumerated()), id: \.element.part) { index, group in
+                    if index > 0 { Divider() }
+                    if let phone = status.model(for: group.part) {
+                        InStockModel(model: model, status: status, phone: phone, sightings: group.sightings)
+                    }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassEffect(.regular.tint(.green.opacity(0.3)), in: .rect(cornerRadius: 32))
+            .transition(.blurReplace.combined(with: .scale(0.96)))
+        }
+    }
+
+    /// One group per model: the selected colour first, then in catalogue order.
+    private var groups: [(part: String, sightings: [Status.Sighting])] {
+        let order = status.models.map(\.part)
+        func rank(_ part: String) -> (Int, Int) {
+            (status.model(for: part)?.finish == finish ? 0 : 1, order.firstIndex(of: part) ?? .max)
+        }
+        return Dictionary(grouping: status.sightings, by: \.part)
+            .map { (part: $0.key, sightings: $0.value) }
+            .sorted { rank($0.part) < rank($1.part) }
+    }
+
+    private var storeCount: String {
+        let stores = Set(status.sightings.map(\.storeNumber)).count
+        return stores == 1 ? "1 store" : "\(stores) stores"
+    }
+}
+
+/// One size and colour that's in stock: the phone, where it is, and a Buy button.
+private struct InStockModel: View {
+    let model: StatusModel
+    let status: Status
+    let phone: Status.Model
+    let sightings: [Status.Sighting]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(phone.capacity)
+                        .font(.system(size: 40, weight: .bold, design: .rounded))
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill((phone.finish ?? .nightSky).swatch.gradient)
+                            .frame(width: 16, height: 16)
+                            .overlay(Circle().strokeBorder(.primary.opacity(0.25), lineWidth: 1))
+                        Text(phone.colour).font(.headline)
+                    }
+                }
+                Spacer(minLength: 0)
+                thumbnail
+            }
+
+            VStack(spacing: 12) {
+                ForEach(sightings, id: \.storeNumber) { sighting in
+                    store(sighting)
+                }
+            }
+
+            VStack(spacing: 8) {
+                Button {
+                    Task { await AppleStore.open(phone.url) }
+                } label: {
+                    Label("Buy in Apple Store", systemImage: "bag.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(.green)
+                .controlSize(.large)
+                .accessibilityHint("Opens \(phone.name) in the Apple Store app")
+
+                Text(sightings.count == 1 ? "Choose Apple \(sightings[0].storeName) for pickup at checkout." : "Choose one of these stores for pickup at checkout.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    /// Apple's shot of the phone in this colour. Like the hero, only the middle, where the phone is, is laid out.
+    @ViewBuilder private var thumbnail: some View {
+        if let image = phone.finish.flatMap(model.image(for:)) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 128, height: 128 * 1112 / 940)
+                .frame(width: 128, height: 80)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func store(_ sighting: Status.Sighting) -> some View {
+        let episode = status.lastSeen.first { $0.part == sighting.part && $0.storeNumber == sighting.storeNumber }
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "mappin.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Apple \(sighting.storeName)").font(.headline)
+                Text(place(sighting)).font(.subheadline).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(sighting.quote).font(.subheadline.weight(.semibold)).foregroundStyle(.green)
+                if let episode {
+                    Text("for \(Text(episode.from, style: .timer))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func place(_ sighting: Status.Sighting) -> String {
+        let area = status.area(of: sighting.storeNumber)
+        let city = area?.stores.first { $0.number == sighting.storeNumber }?.city
+        return [city, area?.name].compactMap { $0 }.uniqued().joined(separator: " · ")
+    }
+}
+
+// MARK: - Last seen
+
+/// When an iPhone Duo in the selected colour was last in stock, and the most recent sightings of any.
+struct LastSeenCard: View {
     let status: Status
     let finish: Finish
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { _ in
             VStack(alignment: .leading, spacing: 16) {
-                if status.sightings.isEmpty {
-                    lastSeen
-                } else {
-                    inStock
-                }
+                lastSeen
                 if !status.lastSeen.isEmpty {
                     Divider()
                     history
                 }
             }
         }
-        .card(tint: status.sightings.isEmpty ? nil : .green)
-        .sensoryFeedback(.success, trigger: status.sightings.count) { old, new in new > old }
-        .animation(.smooth, value: status.sightings)
-    }
-
-    private var inStock: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                LiveDot(color: .green, trigger: status.sightings.count, size: 9)
-                Text("In stock now").font(.footnote.weight(.semibold)).textCase(.uppercase).tracking(0.6)
-            }
-            .foregroundStyle(.green)
-
-            ForEach(Dictionary(grouping: status.sightings, by: \.part).sorted { $0.key < $1.key }, id: \.key) { part, sightings in
-                let phone = status.model(for: part)
-                HStack(alignment: .center, spacing: 12) {
-                    Circle().fill((phone?.finish ?? finish).swatch.gradient).frame(width: 22, height: 22)
-                        .overlay(Circle().strokeBorder(.primary.opacity(0.2), lineWidth: 1))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(phone?.name ?? part).font(.headline)
-                        Text(stores(sightings)).font(.subheadline).foregroundStyle(.secondary)
-                        Text(sightings[0].quote).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 8)
-                    if let url = phone?.url {
-                        Link("Buy", destination: url)
-                            .buttonStyle(.glassProminent)
-                            .tint(.green)
-                            .font(.headline)
-                    }
-                }
-            }
-        }
-    }
-
-    private func stores(_ sightings: [Status.Sighting]) -> String {
-        let names = sightings.map(\.storeName)
-        return names.count <= 3 ? names.formatted(.list(type: .and)) : "\(names.prefix(2).joined(separator: ", ")) and \(names.count - 2) more"
+        .card()
+        .animation(.smooth, value: status.lastSeen)
     }
 
     @ViewBuilder private var lastSeen: some View {

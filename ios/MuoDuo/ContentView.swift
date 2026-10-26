@@ -54,15 +54,21 @@ struct ContentView: View {
             VStack(spacing: 16) {
                 Hero(model: model, status: status, finish: $finish)
                     .padding(.bottom, 8)
+                // Straight under the colour picker, so a sighting is the first thing on screen.
+                InStockCard(model: model, status: status, finish: finish)
                 HealthBanner(status: status, errorMessage: model.errorMessage)
-                StockCard(status: status, finish: finish)
+                LastSeenCard(status: status, finish: finish)
                 WatchingCard(model: model, status: status, finish: finish)
                 ActivityCard(model: model, status: status, finish: finish)
                 StoresCard(model: model, status: status, finish: finish) { map = MapFocus(area: $0) }
+                SlowedBanner(status: status)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
             .animation(.smooth, value: model.errorMessage)
+            .animation(.smooth, value: status.state)
+            .animation(.smooth, value: status.sightings)
+            .sensoryFeedback(.success, trigger: status.sightings.count) { old, new in new > old }
         }
         .scrollIndicators(.hidden)
         .refreshable { await model.refresh() }

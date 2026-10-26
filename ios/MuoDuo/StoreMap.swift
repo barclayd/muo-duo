@@ -146,7 +146,7 @@ private struct StoreDetail: View {
                         Label(phone?.name ?? sighting.part, systemImage: "checkmark.seal.fill").font(.subheadline.weight(.semibold)).foregroundStyle(.green)
                         Spacer()
                         if let url = phone?.url {
-                            Link("Buy", destination: url).buttonStyle(.glassProminent).tint(.green)
+                            Button("Buy") { Task { await AppleStore.open(url) } }.buttonStyle(.glassProminent).tint(.green)
                         }
                     }
                 }
@@ -167,7 +167,7 @@ private struct StoreDetail: View {
     }
 }
 
-private extension Array where Element: Hashable {
+extension Array where Element: Hashable {
     func uniqued() -> [Element] {
         var seen = Set<Element>()
         return filter { seen.insert($0).inserted }
