@@ -13,7 +13,7 @@
   // that restarts the alarm chain if it ever breaks.
   "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
-    "APNS_TEAM_ID": "L93R8XSTDZ",
+    "APNS_TEAM_ID": "R2GGK3VN2C",
     "APNS_TOPIC": "com.barclayd.muoduo"
   }
   // Secrets (wrangler secret put): API_TOKEN, APNS_KEY, APNS_KEY_ID
