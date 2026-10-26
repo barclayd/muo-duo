@@ -1,0 +1,6 @@
+// The Worker this app talks to. `$()` stops xcconfig reading `//` as a comment.
+MUODUO_API_BASE_URL = https:/$()/muo-duo.barclaysd.workers.dev
+MUODUO_API_TOKEN =
+
+// Put MUODUO_API_TOKEN (and any URL override) in Secrets.xcconfig, which is gitignored.
+#include? "Secrets.xcconfig"

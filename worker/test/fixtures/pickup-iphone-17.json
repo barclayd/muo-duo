@@ -1,0 +1,52 @@
+{
+  "head": {
+    "status": "200",
+    "data": {}
+  },
+  "body": {
+    "PickupMessage": {
+      "stores": [
+        {
+          "storeNumber": "R226",
+          "storeName": "White City",
+          "partsAvailability": {
+            "MG6M4QN/A": {
+              "partNumber": "MG6M4QN/A",
+              "pickupDisplay": "available",
+              "pickupSearchQuote": "Available Today",
+              "storePickEligible": true
+            },
+            "MG6N4QN/A": {
+              "partNumber": "MG6N4QN/A",
+              "pickupDisplay": "available",
+              "pickupSearchQuote": "Available Today",
+              "storePickEligible": true
+            },
+            "MG6K4QN/A": {
+              "partNumber": "MG6K4QN/A",
+              "pickupDisplay": "available",
+              "pickupSearchQuote": "Available Today",
+              "storePickEligible": true
+            }
+          }
+        },
+        {
+          "storeNumber": "R329",
+          "storeName": "Brompton Road",
+          "partsAvailability": {}
+        },
+        {
+          "storeNumber": "R092",
+          "storeName": "Regent Street",
+          "partsAvailability": {}
+        }
+      ],
+      "location": "NW6 5PU",
+      "recommendedProducts": [
+        "MG6M4QN/A",
+        "MG6N4QN/A",
+        "MG6K4QN/A"
+      ]
+    }
+  }
+}
