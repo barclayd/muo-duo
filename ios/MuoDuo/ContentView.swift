@@ -31,8 +31,10 @@ struct ContentView: View {
             .toolbar {
                 if let status = model.status {
                     ToolbarItem(placement: .topBarLeading) {
-                        LiveBadge(state: status.state, lastCheck: model.liveChecks.first?.at ?? status.health.lastCheckAt, pulses: model.pulses)
+                        LiveBadge(model: model, status: status)
                     }
+                    // The badge brings its own glass, so it can turn into a solid pill when something's wrong.
+                    .sharedBackgroundVisibility(.hidden)
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button("Store map", systemImage: "map") { map = MapFocus(area: nil) }
                         Button("Settings", systemImage: "gearshape") { showingSettings = true }

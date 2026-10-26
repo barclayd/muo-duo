@@ -25,8 +25,9 @@ struct APIClient {
         return decoder
     }()
 
+    /// Short timeout: the app polls this every 2s, and a hung request should read as "offline" quickly.
     func status() async throws -> Status {
-        try await send("GET", "status")
+        try await send("GET", "status", timeout: 8)
     }
 
     func registerDevice(token: String, environment: String) async throws -> Status {
@@ -45,11 +46,12 @@ struct APIClient {
         try await send("POST", "test-notification")
     }
 
-    private func send<Response: Decodable>(_ method: String, _ path: String, body: (any Encodable)? = nil) async throws -> Response {
+    private func send<Response: Decodable>(_ method: String, _ path: String, body: (any Encodable)? = nil, timeout: TimeInterval = 60) async throws -> Response {
         guard let base = AppConfig.apiBaseURL, !AppConfig.apiToken.isEmpty else { throw APIError.notConfigured }
 
         var request = URLRequest(url: base.appending(path: path))
         request.httpMethod = method
+        request.timeoutInterval = timeout
         request.setValue("Bearer \(AppConfig.apiToken)", forHTTPHeaderField: "Authorization")
         if let body {
             request.httpBody = try JSONEncoder().encode(body)

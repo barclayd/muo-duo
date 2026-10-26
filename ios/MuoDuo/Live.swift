@@ -9,54 +9,82 @@ extension LiveState {
         case .stale, .slowed: .yellow
         }
     }
-
-    var badge: String {
-        switch self {
-        case .live: "LIVE"
-        case .paused: "PAUSED"
-        case .failing: "FAILING"
-        case .stale: "CHECK"
-        case .slowed: "SLOWED"
-        }
-    }
 }
 
-/// "LIVE · 1s ago", with a dot that ripples on every check the Worker makes.
+/// "LIVE", with a dot that ripples on every check, for as long as the Worker is answering and checking
+/// Apple. Anything else inverts it into a solid pill saying what's wrong.
 struct LiveBadge: View {
-    let state: LiveState
-    let lastCheck: Date?
-    let pulses: Int
+    let model: StatusModel
+    let status: Status
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            HStack(spacing: 7) {
-                LiveDot(color: state.color, trigger: pulses)
-                Text(state.badge).font(.footnote.weight(.bold)).tracking(0.8)
-                if let lastCheck, state != .paused {
-                    // Sized for the longest label, so going from "now" to "2s ago" doesn't resize the toolbar.
-                    ZStack(alignment: .leading) {
-                        Text("00m ago").hidden()
-                        Text(ago(lastCheck, now: context.date)).contentTransition(.numericText())
-                    }
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                }
+        let problem = problem
+        HStack(spacing: 7) {
+            if let problem {
+                Image(systemName: problem.symbol)
+                    .font(.caption2.weight(.heavy))
+                    // The only colour: orange for something wrong, none for a deliberate pause.
+                    .foregroundStyle(problem == .paused ? Color(.systemBackground) : .orange)
+                    .accessibilityHidden(true)
+                    .transition(.scale.combined(with: .opacity))
+            } else {
+                LiveDot(color: .green, trigger: model.pulses)
+                    .transition(.scale.combined(with: .opacity))
             }
-            .padding(.horizontal, 6)
-            .fixedSize()
-            .animation(.snappy, value: context.date)
+            Text(problem?.label ?? "LIVE")
+                .font(.footnote.weight(.bold))
+                .tracking(0.8)
+                .contentTransition(.interpolate)
         }
+        .foregroundStyle(problem == nil ? Color.primary : Color(.systemBackground))
+        .padding(.horizontal, 14)
+        .frame(height: 44)
+        .fixedSize()
+        // Solid rather than tinted glass, which would wash out the orange.
+        .background(Color.primary.opacity(problem == nil ? 0 : 1), in: .capsule)
+        .glassEffect(problem == nil ? .regular : .identity, in: .capsule)
+        .animation(.smooth, value: problem)
         .accessibilityElement(children: .combine)
     }
 
-    private func ago(_ date: Date, now: Date) -> String {
-        let seconds = Int(max(0, now.timeIntervalSince(date)))
-        switch seconds {
-        case ..<2: return "now"
-        case ..<60: return "\(seconds)s ago"
-        case ..<3600: return "\(seconds / 60)m ago"
-        default: return "\(seconds / 3600)h ago"
+    /// Worst first. Slowed still counts as live: checks are getting through, just less often.
+    private var problem: Problem? {
+        if model.errorMessage != nil { return .offline }
+        if status.config.paused { return .paused }
+        if status.health.consecutiveFailures > 0 { return .failing }
+        if stopped { return .stopped }
+        if status.resultsMayBeStale { return .stale }
+        return nil
+    }
+
+    /// The Worker answered, but its next check is over 2 minutes overdue or it has none. The alarm is cleared
+    /// while a check runs, so then it goes by the last check, with room for a slowed pace.
+    private var stopped: Bool {
+        guard let receivedAt = model.receivedAt, let due = status.nextCheckAt ?? status.health.lastCheckAt else { return true }
+        return receivedAt.timeIntervalSince(due) > 120
+    }
+
+    private enum Problem {
+        case offline, paused, failing, stopped, stale
+
+        var label: String {
+            switch self {
+            case .offline: "OFFLINE"
+            case .paused: "PAUSED"
+            case .failing: "FAILING"
+            case .stopped: "STOPPED"
+            case .stale: "STALE"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .offline: "wifi.slash"
+            case .paused: "pause.fill"
+            case .failing: "exclamationmark"
+            case .stopped: "stop.fill"
+            case .stale: "questionmark"
+            }
         }
     }
 }

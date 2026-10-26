@@ -11,6 +11,8 @@ final class StatusModel {
     }
 
     private(set) var status: Status?
+    /// When `status` arrived, to tell a Worker that has stopped checking from one that's between checks.
+    private(set) var receivedAt: Date?
     private(set) var errorMessage: String?
     private(set) var isWorking = false
     private(set) var registration = Registration.pending
@@ -105,6 +107,7 @@ final class StatusModel {
 
     private func absorb(_ status: Status) {
         self.status = status
+        receivedAt = .now
         loadImages(Set(status.models.map(\.imageUrl)))
 
         guard let newest = status.recentChecks.first else { return }
