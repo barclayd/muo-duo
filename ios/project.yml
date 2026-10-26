@@ -24,6 +24,8 @@ targets:
       - path: MuoDuo/AppIcon.icon
         type: file
         buildPhase: resources
+    dependencies:
+      - target: MuoDuoNotifications
     configFiles:
       Debug: Config/App.xcconfig
       Release: Config/App.xcconfig
@@ -45,3 +47,26 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         MuoDuoAPIBaseURL: $(MUODUO_API_BASE_URL)
         MuoDuoAPIToken: $(MUODUO_API_TOKEN)
+        NSAlarmKitUsageDescription: Stock found first thing in the morning rings an alarm, so a restock wakes you.
+
+  # Rings an alarm for stock pushed in the alarm hours. Alerts without that flag don't come through here.
+  MuoDuoNotifications:
+    type: app-extension
+    platform: iOS
+    # For AlarmKit's alert without a stop button of its own, which arrived in 26.1.
+    deploymentTarget: "26.1"
+    sources:
+      - path: MuoDuoNotifications
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.barclayd.muoduo.notifications
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    info:
+      path: MuoDuoNotifications/Info.plist
+      properties:
+        CFBundleDisplayName: Muo Duo
+        NSAlarmKitUsageDescription: Stock found first thing in the morning rings an alarm, so a restock wakes you.
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService

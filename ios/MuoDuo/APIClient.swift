@@ -15,6 +15,7 @@ struct APIClient {
 
     private struct ErrorBody: Decodable { let error: String }
     private struct DeviceRegistration: Encodable { let token: String; let environment: String }
+    private struct TestRequest: Encodable { let alarm: Bool; let delaySeconds: Int }
 
     private static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
@@ -42,8 +43,9 @@ struct APIClient {
         try await send("POST", "check")
     }
 
-    func sendTestNotification() async throws -> TestResult {
-        try await send("POST", "test-notification")
+    /// With a delay, the Worker answers straight away and sends it later, so it can't say whether it arrived.
+    func sendTestNotification(alarm: Bool = false, delaySeconds: Int = 0) async throws -> TestResult {
+        try await send("POST", "test-notification", body: TestRequest(alarm: alarm, delaySeconds: delaySeconds))
     }
 
     private func send<Response: Decodable>(_ method: String, _ path: String, body: (any Encodable)? = nil, timeout: TimeInterval = 60) async throws -> Response {

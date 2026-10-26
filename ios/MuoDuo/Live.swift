@@ -206,11 +206,14 @@ struct Ticker: View {
                                 Text("You won't get stock alerts").font(.caption).foregroundStyle(.secondary)
                             } else if let check {
                                 Text(check.ok ? "Checked \(check.area)" : "\(check.area) didn't answer").font(.subheadline.weight(.semibold))
-                                Text("\(status.model(for: check.part)?.name ?? check.part) · \(check.ms) ms").font(.caption).foregroundStyle(.secondary)
+                                Text("\(status.subject(of: check)) · \(check.ms) ms").font(.caption).foregroundStyle(.secondary)
                             } else {
                                 Text("Waiting for the first check").font(.subheadline.weight(.semibold))
                             }
                         }
+                        // One line each, so the capsule keeps its height. Long area names shrink a little first.
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                         .id(status.config.paused ? "paused" : check?.id)
                         .transition(.push(from: .bottom))
                     }

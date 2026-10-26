@@ -1,3 +1,4 @@
+import AlarmKit
 import UIKit
 import UserNotifications
 
@@ -14,6 +15,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             model.notificationsAllowed = granted ?? false
             // Tokens can change, so register on every launch; the Worker dedupes.
             application.registerForRemoteNotifications()
+            // Asked up front, since the alarm hours are on from the start and the extension can't ask.
+            _ = try? await AlarmManager.shared.requestAuthorization()
         }
         return true
     }

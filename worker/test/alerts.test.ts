@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { currentSightings, newSightings, stockAlert } from '../src/alerts';
+import { currentSightings, inAlarmWindow, newSightings, stockAlert } from '../src/alerts';
 import type { Sighting } from '../src/apple';
 
 const whiteCity256: Sighting = { part: 'MK2E4QN/A', storeNumber: 'R226', storeName: 'White City', quote: 'Available Today' };
@@ -34,5 +34,35 @@ describe('stockAlert', () => {
     });
     expect(alert.aps['interruption-level']).toBe('time-sensitive');
     expect(alert.url).toBe('https://www.apple.com/uk/shop/buy-iphone/iphone-duo/7.6-inch-display-256gb-night-sky');
+  });
+
+  test('only goes through the app to ring an alarm when asked to', () => {
+    const quiet = stockAlert([whiteCity256]);
+    expect(quiet.aps).not.toHaveProperty('mutable-content');
+    expect(quiet).not.toHaveProperty('alarm');
+    const ringing = stockAlert([whiteCity256], true);
+    expect(ringing.aps['mutable-content']).toBe(1);
+    expect(ringing.alarm).toBe(true);
+  });
+});
+
+describe('inAlarmWindow', () => {
+  const sixToEight = { enabled: true, from: 6, to: 8 };
+
+  test('uses UK hours, which are an hour ahead of UTC in summer', () => {
+    expect(inAlarmWindow(sixToEight, new Date('2026-07-01T04:59:00Z'))).toBe(false);
+    expect(inAlarmWindow(sixToEight, new Date('2026-07-01T05:00:00Z'))).toBe(true);
+    expect(inAlarmWindow(sixToEight, new Date('2026-07-01T06:59:00Z'))).toBe(true);
+    expect(inAlarmWindow(sixToEight, new Date('2026-07-01T07:00:00Z'))).toBe(false);
+  });
+
+  test('and match UTC in winter', () => {
+    expect(inAlarmWindow(sixToEight, new Date('2026-12-01T05:59:00Z'))).toBe(false);
+    expect(inAlarmWindow(sixToEight, new Date('2026-12-01T06:00:00Z'))).toBe(true);
+    expect(inAlarmWindow(sixToEight, new Date('2026-12-01T08:00:00Z'))).toBe(false);
+  });
+
+  test('never rings when turned off', () => {
+    expect(inAlarmWindow({ ...sixToEight, enabled: false }, new Date('2026-12-01T07:00:00Z'))).toBe(false);
   });
 });
