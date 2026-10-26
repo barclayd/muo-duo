@@ -26,7 +26,7 @@ export const findModel = (part: string) => MODELS.find((m) => m.part === part);
 export const productUrl = (model: Model) =>
   `https://www.apple.com/uk/shop/buy-iphone/iphone-duo/7.6-inch-display-${model.slug}`;
 
-// The pickup endpoint reports in-stock *similar* models rather than the one asked about, so
+// The pickup endpoint never reports the part asked about, only its in-stock sibling colours, so
 // watching a model means asking about every colour at its capacity.
 export function partsToQuery(watched: readonly string[]) {
   const capacities = new Set(watched.map((part) => findModel(part)?.capacity));

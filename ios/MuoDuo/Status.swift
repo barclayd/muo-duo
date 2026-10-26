@@ -33,6 +33,8 @@ struct Status: Decodable {
 
     let config: Config
     let health: Health
+    /// Apple is answering, but even a model that's always in stock shows nothing, so "nothing in stock" may be wrong.
+    let resultsMayBeStale: Bool
     let sightings: [Sighting]
     let devices: Int
     let nextCheckAt: Date?

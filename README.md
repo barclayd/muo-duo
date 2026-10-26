@@ -13,9 +13,10 @@ Durable Object alarm (~60s ± 10%)
        └─ new part@store seen? ── yes ─▶ APNs (time-sensitive) ─▶ iPhone
 ```
 
-- **Endpoint.** Apple's `fulfillment-messages` endpoint sits behind a bot shield (HTTP 541 without a browser session), so it isn't used. `pickup-message-recommendations` is open. It reports what's available at nearby stores, and often lists *similar* models (such as the other colour) rather than the one asked for. So the checker queries both colours at each watched capacity and keeps any watched part that comes back.
+- **Endpoint.** Apple's `fulfillment-messages` endpoint sits behind a bot shield (HTTP 541 without a browser session), so it isn't used. `pickup-message-recommendations` is open. For the part asked about, it lists the *other* colours at the same capacity that are in stock at the 12 nearest stores (about 20 miles from NW6); the queried part itself never appears. So the checker queries every colour at each watched capacity and keeps any watched part that comes back.
 - **Alerts fire once per part@store.** A sighting is only remembered after a push was delivered, so a failed push retries on the next cycle.
-- **Silence is not "no stock".** After 3 failed checks in a row you get a "Stock checker is failing" push, and a "recovered" push when it comes back. Failures back off exponentially, capped at 15 minutes.
+- **Silence is not "no stock".** After 3 failed checks in a row you get a "Stock checker is failing" push, and a "recovered" push when it comes back. Failures back off exponentially, capped at 15 minutes. A response with no stores at all counts as a failure.
+- **A canary for empty answers.** Every 10 minutes the checker also asks about iPhone 17 256GB, which is reliably in stock around London. If it shows nothing 3 times running, Apple may be serving empty results, so you get a "Stock results may be stale" push and the app says so.
 - **A watchdog.** A cron every 5 minutes restarts the alarm loop if it ever stops.
 - **Rate limits.** Apple sends no rate-limit headers. 10 requests at 30s intervals from Cloudflare (LHR) all returned 200. The real ceiling is unknown, so the defaults stay modest (4 requests a minute).
 

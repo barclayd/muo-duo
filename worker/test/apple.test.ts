@@ -26,4 +26,8 @@ describe('parsePickup', () => {
   test('throws on an unexpected shape so a changed API counts as a failed check', () => {
     expect(() => parsePickup({ body: {} })).toThrow(AppleError);
   });
+
+  test('throws when Apple lists no stores, rather than reporting no stock', () => {
+    expect(() => parsePickup({ body: { PickupMessage: { stores: [] } } })).toThrow(AppleError);
+  });
 });

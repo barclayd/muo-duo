@@ -88,6 +88,13 @@ private struct CheckerSection: View {
                     Text(error).font(.footnote).foregroundStyle(.secondary)
                 }
             }
+        } else if status.resultsMayBeStale {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Results may be stale", systemImage: "questionmark.circle.fill")
+                    .foregroundStyle(.yellow)
+                Text("Apple is answering, but even iPhone 17 shows no stock nearby.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
         } else {
             Label("Watching every \(status.config.intervalSeconds)s", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)

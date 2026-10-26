@@ -17,12 +17,21 @@ export interface Health {
   lastError?: string;
   consecutiveFailures: number;
   unhealthyAlerted: boolean;
+  lastCanaryAt?: string;
+  canaryMisses: number;
+  staleAlerted: boolean;
 }
 
 const DEFAULT_CONFIG: Config = { postcode: 'NW6 5PU', parts: DEFAULT_PARTS, intervalSeconds: 60, paused: false };
 const FAILURES_BEFORE_ALERT = 3;
 const MAX_BACKOFF_SECONDS = 15 * 60;
 const GAP_BETWEEN_REQUESTS_MS = 2_000;
+
+// iPhone 17 256GB is reliably in stock around London. If even it shows nothing anywhere, Apple is
+// probably serving empty results, which would otherwise look exactly like "no Duo in stock".
+const CANARY_PART = 'MG6N4QN/A';
+const CANARY_INTERVAL_MS = 10 * 60_000;
+const CANARY_MISSES_BEFORE_ALERT = 3;
 
 // Single instance that polls Apple on a self-rescheduling alarm and pushes to registered devices.
 export class Checker extends DurableObject<Env> {
@@ -31,9 +40,11 @@ export class Checker extends DurableObject<Env> {
 
   async status() {
     const alarm = await this.ctx.storage.getAlarm();
+    const health = await this.health();
     return {
       config: await this.config(),
-      health: await this.health(),
+      health,
+      resultsMayBeStale: health.canaryMisses >= CANARY_MISSES_BEFORE_ALERT,
       sightings: await this.sightings(),
       devices: (await this.devices()).length,
       nextCheckAt: alarm === null ? null : new Date(alarm).toISOString(),
@@ -103,9 +114,12 @@ export class Checker extends DurableObject<Env> {
       const delivered = fresh.length === 0 || (await this.notify(stockAlert(fresh))).delivered;
       if (delivered) await this.ctx.storage.put('sightings', current);
 
+      const canaryDue = !health.lastCanaryAt || Date.now() - Date.parse(health.lastCanaryAt) >= CANARY_INTERVAL_MS;
+      if (canaryDue) await this.canary(config, health);
+
       if (health.unhealthyAlerted) await this.notify(healthAlert('Stock checker recovered', 'Apple is responding again.'));
       Object.assign(health, { lastSuccessAt: health.lastCheckAt, lastError: undefined, consecutiveFailures: 0, unhealthyAlerted: false });
-      console.log(JSON.stringify({ event: 'check', ok: true, ms: Date.now() - started, inStock: current.length, fresh: fresh.length, delivered }));
+      console.log(JSON.stringify({ event: 'check', ok: true, ms: Date.now() - started, inStock: current.length, fresh: fresh.length, delivered, canaryMisses: health.canaryMisses }));
     } catch (error) {
       health.consecutiveFailures += 1;
       health.lastError = error instanceof Error ? error.message : String(error);
@@ -132,6 +146,21 @@ export class Checker extends DurableObject<Env> {
       }
     }
     return [...found.values()];
+  }
+
+  private async canary(config: Config, health: Health) {
+    await scheduler.wait(GAP_BETWEEN_REQUESTS_MS);
+    const seen = (await fetchPickup(CANARY_PART, config.postcode)).length > 0;
+    health.lastCanaryAt = new Date().toISOString();
+    health.canaryMisses = seen ? 0 : health.canaryMisses + 1;
+
+    if (seen && health.staleAlerted) {
+      await this.notify(healthAlert('Stock results look normal again', 'Apple is returning stock data again.'));
+      health.staleAlerted = false;
+    } else if (!seen && health.canaryMisses >= CANARY_MISSES_BEFORE_ALERT && !health.staleAlerted) {
+      const body = `Apple is answering, but even iPhone 17 shows no stock near ${config.postcode}, so "nothing in stock" may be wrong.`;
+      health.staleAlerted = (await this.notify(healthAlert('Stock results may be stale', body))).delivered;
+    }
   }
 
   private async notify(payload: object) {
@@ -174,7 +203,8 @@ export class Checker extends DurableObject<Env> {
   }
 
   private async health(): Promise<Health> {
-    return (await this.ctx.storage.get<Health>('health')) ?? { consecutiveFailures: 0, unhealthyAlerted: false };
+    const defaults: Health = { consecutiveFailures: 0, unhealthyAlerted: false, canaryMisses: 0, staleAlerted: false };
+    return { ...defaults, ...(await this.ctx.storage.get<Partial<Health>>('health')) };
   }
 
   private async devices() {

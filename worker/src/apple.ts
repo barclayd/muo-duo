@@ -1,6 +1,6 @@
-// Apple's pickup-message-recommendations endpoint. It lists in-stock *similar* models per store
-// (for the Duo, the other colour at the same capacity), so we query every watched part and keep
-// any watched part that shows up in any response.
+// Apple's pickup-message-recommendations endpoint. For the part asked about it lists, per store, the
+// *other* colours at the same capacity that are in stock; the queried part itself is never included.
+// So a part's stock only shows up when one of its sibling colours is queried (see partsToQuery).
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Safari/605.1.15';
@@ -36,6 +36,8 @@ interface PickupResponse {
 export function parsePickup(json: unknown): Sighting[] {
   const stores = (json as PickupResponse).body?.PickupMessage?.stores;
   if (!Array.isArray(stores)) throw new AppleError('Unexpected response shape: no PickupMessage.stores');
+  // An empty store list would read as "nothing in stock", so treat it as a failed check instead.
+  if (stores.length === 0) throw new AppleError('Apple returned no stores for this postcode');
 
   return stores.flatMap((store) =>
     Object.entries(store.partsAvailability ?? {})
