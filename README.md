@@ -20,7 +20,7 @@ Durable Object alarm (every ~5s ± 10%: 20s ÷ 4 colour/capacity queries)
 - **A canary for empty answers.** Every 10 minutes the checker also asks about iPhone 17 256GB, which is reliably in stock around London. If it shows nothing 3 times running, Apple may be serving empty results, so you get a "Stock results may be stale" push and the app says so.
 - **A watchdog.** A cron every 5 minutes restarts the alarm loop if it ever stops.
 - **Rate limits.** Apple sends no rate-limit headers and the real ceiling is unknown. Its answers aren't cached (`cdn-cache; desc=MISS`, a new ETag every time), so polling faster really does see changes sooner. If Apple pushes back (HTTP 403, 429, 503 or the 541 bot shield), the checker halves its speed and pushes a "Checking less often" alert. Further pushback keeps halving it, down to checking each model every 15 minutes. After every 30 minutes without pushback it doubles again, back up to the configured speed, and pushes "Back to full speed" when it gets there.
-- **Cloudflare limits.** Free-plan Durable Objects allow 100,000 storage row writes a day, and every alarm counts as one. A tick writes three rows (its answer, health, the next alarm): about 52,000 a day at 20s, which is why 20s is the fastest interval allowed. The paid Workers plan lifts this.
+- **Cloudflare cost.** This needs the Workers Paid plan. Every alarm is a Durable Object request and writes three storage rows (its answer, health, the next alarm). At 20s that's about 0.5M requests and 1.6M row writes a month, inside the 1M and 50M included. At the 10s minimum it's about 1.05M requests, roughly a cent over. Duration can't exceed what's included: one object in memory all month is about 330,000 GB-s of the 400,000. The 10s floor is there to keep Apple's request rate sane, not for cost.
 
 ## Setup
 
@@ -67,7 +67,7 @@ All routes need `Authorization: Bearer <API_TOKEN>`.
 | --- | --- |
 | `GET /status` | Config, health, current pace, current sightings, device count, next check time, models |
 | `POST /devices` | `{ "token": "<hex>", "environment": "sandbox" \| "production" }` |
-| `PUT /config` | Any of `{ "parts": [...], "postcode": "...", "intervalSeconds": 20–3600, "paused": bool }` |
+| `PUT /config` | Any of `{ "parts": [...], "postcode": "...", "intervalSeconds": 10–3600, "paused": bool }` |
 | `POST /check` | Run a check now and return the status |
 | `POST /test-notification` | Push a test alert to every registered device |
 

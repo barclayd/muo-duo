@@ -38,8 +38,8 @@ const CANARY_MISSES_BEFORE_ALERT = 3;
 
 // Single instance that polls Apple on a self-rescheduling alarm and pushes to registered devices.
 // Each alarm asks about one part, taking turns, so requests are spread evenly and stock is pushed as
-// soon as any one answer shows it. Free-plan Durable Objects allow 100,000 storage row writes a day,
-// so a tick writes only its answer, health and the next alarm (about 52,000 a day at 20s).
+// soon as any one answer shows it. A tick writes only its answer, health and the next alarm, three
+// storage rows, so even at 10s this stays well inside the paid plan's 50 million writes a month.
 export class Checker extends DurableObject<Env> {
   private running = false;
   private apns?: Apns;
