@@ -103,6 +103,7 @@ export class Checker extends DurableObject<Env> {
   async alarm() {
     const config = await this.config();
     if (config.paused) return;
+    const started = Date.now();
 
     const queries = partsToQuery(config.parts);
     if (queries.length > 0) {
@@ -116,7 +117,8 @@ export class Checker extends DurableObject<Env> {
     const pace = await this.pace(config);
     const { consecutiveFailures } = await this.health();
     const delaySeconds = tickDelaySeconds(Math.max(pace.intervalSeconds, config.intervalSeconds), queries.length, consecutiveFailures);
-    await this.ctx.storage.setAlarm(Date.now() + delaySeconds * (0.9 + Math.random() * 0.2) * 1000);
+    // Timed from the start of this tick, so waiting on Apple doesn't stretch the interval.
+    await this.ctx.storage.setAlarm(started + delaySeconds * (0.9 + Math.random() * 0.2) * 1000);
   }
 
   private async runCycle(config: Config, parts: readonly string[]) {
