@@ -43,7 +43,7 @@ The Worker does all the checking; the app only watches it, polling `/status` eve
 - **Liquid Glass.** Cards, colour and capacity pickers, the ticker, the toolbar and the full-screen store map's chips and store panel are all glass over a slowly drifting mesh-gradient sky.
 - **Status badge.** The badge in the top left says LIVE only while the app can reach the Worker and the Worker is checking Apple. Otherwise it inverts into a solid pill saying what's wrong: OFFLINE (the app can't reach the Worker), PAUSED, FAILING (Apple isn't answering), STOPPED (the Worker's next check is over 2 minutes overdue) or STALE. A slow-down still counts as live, since checks are getting through.
 - **Warnings.** If the checker can't reach Apple or the results look stale, a banner says so at the top, since alerts may not arrive. A slow-down after Apple pushes back is less urgent, so it sits at the bottom.
-- **Settings** has pause, the current pace, notification registration and a test push, and the areas and stores being watched.
+- **Settings** is its own page, pushed from the gear, in the same glass over the same sky. Alerts come first: every size of both colours, showing which ones you'll hear about. Turning one on is a tap, but turning one off asks first, so a stray tap can't quietly stop alerts for a size. Pausing checks asks first too. Below that are the current pace and last good check, notification registration and a test push, and each area, which opens to show its stores.
 
 ## Setup
 

@@ -313,64 +313,6 @@ struct LastSeenCard: View {
     }
 }
 
-// MARK: - Watching
-
-/// Which capacities of the selected colour the Worker checks. Tapping one turns it on or off.
-struct WatchingCard: View {
-    let model: StatusModel
-    let status: Status
-    let finish: Finish
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            CardHeader(title: "Alerts for \(finish.name)", symbol: "bell.badge")
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    ForEach(status.models(in: finish)) { phone in
-                        chip(phone)
-                    }
-                }
-            }
-            .disabled(model.isWorking)
-            Text(footer).font(.caption).foregroundStyle(.secondary)
-        }
-        .card()
-    }
-
-    private func chip(_ phone: Status.Model) -> some View {
-        let watching = status.config.parts.contains(phone.part)
-        let inStock = status.sightings.contains { $0.part == phone.part }
-        return Button {
-            Task { await model.setWatching(phone.part, !watching) }
-        } label: {
-            VStack(spacing: 4) {
-                Image(systemName: watching ? "checkmark.circle.fill" : "circle")
-                    .font(.body)
-                    .foregroundStyle(watching ? finish.accent : .secondary)
-                    .contentTransition(.symbolEffect(.replace))
-                Text(phone.capacity).font(.subheadline.weight(.semibold))
-            }
-            .foregroundStyle(watching ? .primary : .secondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .overlay(alignment: .topTrailing) {
-                if inStock { Circle().fill(.green).frame(width: 8, height: 8).padding(8) }
-            }
-            .contentShape(.rect(cornerRadius: 18))
-        }
-        .buttonStyle(.plain)
-        .glassEffect(watching ? .regular.tint(finish.accent.opacity(0.35)).interactive() : .regular.interactive(), in: .rect(cornerRadius: 18))
-        .sensoryFeedback(.impact(weight: .light), trigger: watching)
-        .accessibilityLabel("\(phone.name), \(watching ? "alerts on" : "alerts off")")
-    }
-
-    private var footer: String {
-        let watched = status.models(in: finish).filter { status.config.parts.contains($0.part) }
-        guard !watched.isEmpty else { return "No alerts for \(finish.name). Tap a size to watch it." }
-        return "Each checked in every area every \(status.pace.intervalSeconds)s."
-    }
-}
-
 // MARK: - Activity
 
 /// The Worker's requests to Apple as they happen.

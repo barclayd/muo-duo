@@ -28,6 +28,7 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background { Backdrop(finish: finish) }
+            .navigationDestination(isPresented: $showingSettings) { SettingsPage(model: model, finish: finish) }
             .toolbar {
                 if let status = model.status {
                     ToolbarItem(placement: .topBarLeading) {
@@ -47,7 +48,6 @@ struct ContentView: View {
         .task(id: scenePhase) {
             if scenePhase == .active { await model.poll() }
         }
-        .sheet(isPresented: $showingSettings) { SettingsSheet(model: model) }
         .fullScreenCover(item: $map) { map in StoreMap(model: model, finish: finish, focus: map.area) }
     }
 
@@ -60,7 +60,6 @@ struct ContentView: View {
                 InStockCard(model: model, status: status, finish: finish)
                 HealthBanner(status: status, errorMessage: model.errorMessage)
                 LastSeenCard(status: status, finish: finish)
-                WatchingCard(model: model, status: status, finish: finish)
                 ActivityCard(model: model, status: status, finish: finish)
                 StoresCard(model: model, status: status, finish: finish) { map = MapFocus(area: $0) }
                 SlowedBanner(status: status)
