@@ -1,25 +1,18 @@
 import SwiftUI
-import UIKit
 
 struct ContentView: View {
     let model: StatusModel
 
     @Environment(\.scenePhase) private var scenePhase
-    @State private var testResult: String?
+    @AppStorage("finish") private var finish = Finish.nightSky
+    @State private var showingSettings = false
+    @State private var map: MapFocus?
 
     var body: some View {
         NavigationStack {
             Group {
                 if let status = model.status {
-                    List {
-                        if let error = model.errorMessage {
-                            Text(error).foregroundStyle(.red)
-                        }
-                        CheckerSection(status: status, model: model)
-                        StockSection(status: status)
-                        ModelsSection(status: status, model: model)
-                        NotificationsSection(status: status, model: model, testResult: $testResult)
-                    }
+                    home(status)
                 } else if let error = model.errorMessage {
                     ContentUnavailableView {
                         Label("Can't reach the checker", systemImage: "wifi.exclamationmark")
@@ -27,153 +20,59 @@ struct ContentView: View {
                         Text(error)
                     } actions: {
                         Button("Try again") { Task { await model.refresh() } }
+                            .buttonStyle(.glass)
                     }
                 } else {
                     ProgressView()
                 }
             }
-            .navigationTitle("Muo Duo")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { Backdrop(finish: finish) }
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    if model.isWorking {
-                        ProgressView()
-                    } else {
-                        Button("Check now", systemImage: "arrow.clockwise") {
-                            Task { await model.checkNow() }
-                        }
+                if let status = model.status {
+                    ToolbarItem(placement: .topBarLeading) {
+                        LiveBadge(state: status.state, lastCheck: model.liveChecks.first?.at ?? status.health.lastCheckAt, pulses: model.pulses)
+                    }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button("Store map", systemImage: "map") { map = MapFocus(area: nil) }
+                        Button("Settings", systemImage: "gearshape") { showingSettings = true }
                     }
                 }
             }
-            .refreshable { await model.refresh() }
         }
+        .preferredColorScheme(finish.colorScheme)
+        // The Worker does the checking; the app only watches while it's on screen.
         .task(id: scenePhase) {
-            if scenePhase == .active { await model.refresh() }
+            if scenePhase == .active { await model.poll() }
         }
-        .alert(testResult ?? "", isPresented: Binding(get: { testResult != nil }, set: { if !$0 { testResult = nil } })) {
-            Button("OK") {}
+        .sheet(isPresented: $showingSettings) { SettingsSheet(model: model) }
+        .fullScreenCover(item: $map) { map in StoreMap(model: model, finish: finish, focus: map.area) }
+    }
+
+    private func home(_ status: Status) -> some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                Hero(model: model, status: status, finish: $finish)
+                    .padding(.bottom, 8)
+                HealthBanner(status: status, errorMessage: model.errorMessage)
+                StockCard(status: status, finish: finish)
+                WatchingCard(model: model, status: status, finish: finish)
+                ActivityCard(model: model, status: status, finish: finish)
+                StoresCard(model: model, status: status, finish: finish) { map = MapFocus(area: $0) }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+            .animation(.smooth, value: model.errorMessage)
+        }
+        .scrollIndicators(.hidden)
+        .refreshable { await model.refresh() }
+        .safeAreaInset(edge: .bottom) {
+            Ticker(model: model, status: status, finish: finish)
         }
     }
 }
 
-private struct CheckerSection: View {
-    let status: Status
-    let model: StatusModel
-
-    var body: some View {
-        Section {
-            state
-            if let date = status.health.lastSuccessAt {
-                LabeledContent("Last good check") { Text(date, format: .relative(presentation: .named)) }
-            }
-            if let date = status.nextCheckAt {
-                LabeledContent("Next check") { Text(date, format: .relative(presentation: .named)) }
-            }
-            LabeledContent("Postcode", value: status.config.postcode)
-            Toggle("Paused", isOn: Binding(
-                get: { status.config.paused },
-                set: { paused in Task { await model.setPaused(paused) } }
-            ))
-            .disabled(model.isWorking)
-        }
-    }
-
-    @ViewBuilder private var state: some View {
-        if status.config.paused {
-            Label("Paused", systemImage: "pause.circle.fill").foregroundStyle(.secondary)
-        } else if status.health.consecutiveFailures > 0 {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("Failing (\(status.health.consecutiveFailures) in a row)", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                if let error = status.health.lastError {
-                    Text(error).font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-        } else if status.resultsMayBeStale {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("Results may be stale", systemImage: "questionmark.circle.fill")
-                    .foregroundStyle(.yellow)
-                Text("Apple is answering, but even iPhone 17 shows no stock nearby.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        } else if let reason = status.pace.reason {
-            VStack(alignment: .leading, spacing: 4) {
-                Label("Slowed to every \(status.pace.intervalSeconds)s", systemImage: "tortoise.fill")
-                    .foregroundStyle(.yellow)
-                Text("\(reason). Speeds back up after 30 minutes without pushback.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        } else {
-            Label("Watching every \(status.pace.intervalSeconds)s", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        }
-    }
-}
-
-private struct StockSection: View {
-    let status: Status
-
-    var body: some View {
-        Section("In stock") {
-            if status.sightings.isEmpty {
-                Text("Nothing near \(status.config.postcode) right now").foregroundStyle(.secondary)
-            }
-            ForEach(status.sightings, id: \.self) { sighting in
-                let model = status.model(for: sighting.part)
-                Link(destination: model?.url ?? URL(string: "https://www.apple.com/uk/shop/buy-iphone")!) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(model?.name ?? sighting.part).font(.headline)
-                        Text("\(sighting.storeName) · \(sighting.quote)").font(.subheadline).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct ModelsSection: View {
-    let status: Status
-    let model: StatusModel
-
-    var body: some View {
-        Section("Watching") {
-            ForEach(status.models) { phone in
-                Toggle(phone.name, isOn: Binding(
-                    get: { status.config.parts.contains(phone.part) },
-                    set: { on in Task { await model.setWatching(phone.part, on) } }
-                ))
-            }
-        }
-        .disabled(model.isWorking)
-    }
-}
-
-private struct NotificationsSection: View {
-    let status: Status
-    let model: StatusModel
-    @Binding var testResult: String?
-
-    var body: some View {
-        Section("Notifications") {
-            LabeledContent("This iPhone", value: registration)
-            LabeledContent("Devices registered", value: "\(status.devices)")
-            if model.notificationsAllowed == false {
-                Button("Notifications are off: open Settings") {
-                    if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                }
-            }
-            Button("Send test notification") {
-                Task { testResult = await model.sendTest() }
-            }
-        }
-    }
-
-    private var registration: String {
-        switch model.registration {
-        case .pending: "Registering…"
-        case .registered: "Registered (\(AppConfig.apnsEnvironment))"
-        case let .failed(message): "Failed: \(message)"
-        }
-    }
+private struct MapFocus: Identifiable {
+    let area: String?
+    var id: String { area ?? "" }
 }
