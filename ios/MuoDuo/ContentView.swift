@@ -6,6 +6,9 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("finish") private var finish = Finish.nightSky
     @State private var showingSettings = false
+    @State private var showingLog = false
+    @State private var showingActivity = false
+    @Namespace private var ticker
     @State private var map: MapFocus?
 
     var body: some View {
@@ -29,6 +32,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background { Backdrop(finish: finish) }
             .navigationDestination(isPresented: $showingSettings) { SettingsPage(model: model, finish: finish) }
+            .navigationDestination(isPresented: $showingLog) { StockLogPage(model: model, finish: finish) }
             .toolbar {
                 if let status = model.status {
                     ToolbarItem(placement: .topBarLeading) {
@@ -49,6 +53,10 @@ struct ContentView: View {
             if scenePhase == .active { await model.poll() }
         }
         .fullScreenCover(item: $map) { map in StoreMap(model: model, finish: finish, focus: map.area) }
+        .fullScreenCover(isPresented: $showingActivity) {
+            ActivityPage(model: model, finish: finish)
+                .navigationTransition(.zoom(sourceID: "ticker", in: ticker))
+        }
     }
 
     private func home(_ status: Status) -> some View {
@@ -60,7 +68,7 @@ struct ContentView: View {
                 InStockCard(model: model, status: status, finish: finish)
                 HealthBanner(status: status, errorMessage: model.errorMessage)
                 LastSeenCard(status: status, finish: finish)
-                ActivityCard(model: model, status: status, finish: finish)
+                StockLogCard(status: status) { showingLog = true }
                 StoresCard(model: model, status: status, finish: finish) { map = MapFocus(area: $0) }
                 SlowedBanner(status: status)
             }
@@ -74,7 +82,8 @@ struct ContentView: View {
         .scrollIndicators(.hidden)
         .refreshable { await model.refresh() }
         .safeAreaInset(edge: .bottom) {
-            Ticker(model: model, status: status, finish: finish)
+            Ticker(model: model, status: status, finish: finish) { showingActivity = true }
+                .matchedTransitionSource(id: "ticker", in: ticker)
         }
     }
 }

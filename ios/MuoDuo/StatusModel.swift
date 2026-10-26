@@ -141,7 +141,7 @@ final class StatusModel {
         areaPulses[check.area, default: 0] += 1
     }
 
-    private static let liveCheckCount = 12
+    private static let liveCheckCount = 30
 
     // Apple's CDN only lets these be cached for about a minute, so they're kept on disk here.
     private func loadImages(_ urls: Set<URL>) {

@@ -72,6 +72,26 @@ struct Status: Decodable {
         var id: String { "\(at.timeIntervalSince1970)|\(area)|\(part)" }
     }
 
+    /// Something for the stock log: a watched model coming into stock at a store or going again, or the
+    /// checker stopping and starting.
+    struct LogEntry: Decodable, Identifiable, Hashable {
+        enum Kind: String, Decodable {
+            case inStock = "in"
+            case gone, failing, recovered, stale, normal, paused, resumed
+        }
+
+        let at: Date
+        let kind: Kind
+        let part: String?
+        let storeNumber: String?
+        let storeName: String?
+        let quote: String?
+        /// When stock that's gone came in.
+        let since: Date?
+        let detail: String?
+        var id: String { "\(at.timeIntervalSince1970)|\(kind.rawValue)|\(part ?? "")|\(storeNumber ?? "")" }
+    }
+
     struct Model: Decodable, Identifiable {
         let part: String
         let name: String
@@ -93,6 +113,9 @@ struct Status: Decodable {
     /// Most recent first.
     let lastSeen: [Episode]
     let trackingSince: Date?
+    /// Most recent first.
+    let log: [LogEntry]
+    let loggingSince: Date?
     /// Most recent first.
     let recentChecks: [Check]
     let devices: Int
