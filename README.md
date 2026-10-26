@@ -2,7 +2,7 @@
 
 Push notifications to my iPhone the moment an iPhone Duo is available for pickup at any Apple Store in London, the south of England or Manchester.
 
-- **`worker/`**: a Cloudflare Worker with one Durable Object that polls Apple's pickup endpoint for 22 stores in three areas, one request a second, and sends APNs pushes.
+- **`worker/`**: a Cloudflare Worker with one Durable Object that polls Apple's pickup endpoint for 20 stores in three areas, one request a second, and sends APNs pushes.
 - **`ios/`**: a SwiftUI app with a Liquid Glass design. It shows the checker working live, when an iPhone Duo was last in stock and where, a map of the stores being watched, and which models alert you. Tapping an alert, or Buy in the app, opens the model in the Apple Store app.
 
 ## How it works
@@ -19,7 +19,7 @@ Durable Object alarm (about once a second: 3 areas × 4 colour/capacity queries,
   | Area | Search | Stores |
   | --- | --- | --- |
   | London | `NW6 5PU` | all 12 in and around London, Watford to Bluewater |
-  | South of England | `DT1 1XJ` | Brighton, Basingstoke, Reading, Southampton, Bath, Bristol, Exeter, Plymouth |
+  | South of England | `DT1 1XJ` | Brighton, Basingstoke, Reading, Southampton, Bath, Bristol |
   | Manchester | `Manchester` | Arndale and Trafford Centre |
 
   Each area lists its store numbers, and answers are filtered to them, so a far-off store Apple adds to an answer is ignored. If Apple leaves a listed store out, the store shows as "not covered" in the app. Milton Keynes and Cambridge are just outside these searches; add another area to cover them.

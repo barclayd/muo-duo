@@ -41,8 +41,8 @@ export const DEFAULT_AREAS: Area[] = [
     // Dorchester, Dorset. Its 12 nearest stores include every one in the south outside London, with
     // Brighton 9th; from Exeter, Brighton is 12th and would be the first to drop off the list.
     search: 'DT1 1XJ',
-    // Brighton, Basingstoke, Reading, Southampton, Bath, Bristol (Cribbs Causeway), Exeter, Plymouth
-    stores: ['R244', 'R482', 'R176', 'R174', 'R335', 'R393', 'R279', 'R545'],
+    // Brighton, Basingstoke, Reading, Southampton, Bath, Bristol (Cribbs Causeway)
+    stores: ['R244', 'R482', 'R176', 'R174', 'R335', 'R393'],
   },
   {
     name: 'Manchester',
