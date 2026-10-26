@@ -30,8 +30,8 @@ function parseConfigPatch(body: unknown): Partial<Config> | string {
     patch.postcode = postcode.trim().toUpperCase();
   }
   if (intervalSeconds !== undefined) {
-    if (!Number.isInteger(intervalSeconds) || (intervalSeconds as number) < 30 || (intervalSeconds as number) > 3600) {
-      return 'intervalSeconds must be a whole number between 30 and 3600';
+    if (!Number.isInteger(intervalSeconds) || (intervalSeconds as number) < 20 || (intervalSeconds as number) > 3600) {
+      return 'intervalSeconds must be a whole number between 20 and 3600';
     }
     patch.intervalSeconds = intervalSeconds as number;
   }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { newSightings, stockAlert } from '../src/alerts';
+import { currentSightings, newSightings, stockAlert } from '../src/alerts';
 import type { Sighting } from '../src/apple';
 
 const whiteCity256: Sighting = { part: 'MK2E4QN/A', storeNumber: 'R226', storeName: 'White City', quote: 'Available Today' };
@@ -14,6 +14,14 @@ describe('newSightings', () => {
   test('treats a restock after selling out as new', () => {
     const soldOut: Sighting[] = [];
     expect(newSightings(soldOut, [whiteCity256])).toEqual([whiteCity256]);
+  });
+});
+
+describe('currentSightings', () => {
+  test('combines answers, keeping only watched parts and each part/store once', () => {
+    const blackAnswer = [whiteCity256, regentStreet256];
+    const whiteAnswer = [whiteCity256, { ...whiteCity256, part: 'MK2D4QN/A' }];
+    expect(currentSightings([blackAnswer, whiteAnswer], ['MK2E4QN/A'])).toEqual([whiteCity256, regentStreet256]);
   });
 });
 

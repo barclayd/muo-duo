@@ -1,0 +1,57 @@
+import { describe, expect, test } from 'bun:test';
+import { isPushback, MAX_INTERVAL_SECONDS, SPEED_UP_AFTER_MS, slowDown, speedUp, tickDelaySeconds } from '../src/pace';
+
+const atTarget = { intervalSeconds: 20, changedAt: 0 };
+
+describe('isPushback', () => {
+  test('treats rate limiting and the bot shield as pushback, but not other errors', () => {
+    expect([403, 429, 503, 541].map(isPushback)).toEqual([true, true, true, true]);
+    expect([404, 500, undefined].map(isPushback)).toEqual([false, false, false]);
+  });
+});
+
+describe('slowDown', () => {
+  test('doubles the interval and records why', () => {
+    expect(slowDown(atTarget, 20, 'HTTP 429', 1_000)).toEqual({ intervalSeconds: 40, changedAt: 1_000, reason: 'HTTP 429' });
+  });
+
+  test('doubles from the target when the stored pace is faster than it', () => {
+    expect(slowDown({ intervalSeconds: 20, changedAt: 0 }, 60, 'HTTP 429', 0).intervalSeconds).toBe(120);
+  });
+
+  test('stops at the maximum', () => {
+    expect(slowDown({ intervalSeconds: 600, changedAt: 0 }, 20, 'HTTP 429', 0).intervalSeconds).toBe(MAX_INTERVAL_SECONDS);
+  });
+});
+
+describe('speedUp', () => {
+  const slowed = { intervalSeconds: 80, changedAt: 0, reason: 'HTTP 429' };
+
+  test('waits for half an hour without pushback', () => {
+    expect(speedUp(slowed, 20, SPEED_UP_AFTER_MS - 1)).toBe(slowed);
+  });
+
+  test('then halves the interval', () => {
+    expect(speedUp(slowed, 20, SPEED_UP_AFTER_MS)).toEqual({ intervalSeconds: 40, changedAt: SPEED_UP_AFTER_MS, reason: 'HTTP 429' });
+  });
+
+  test('never goes faster than the target, and drops the reason once back at it', () => {
+    expect(speedUp({ ...slowed, intervalSeconds: 30 }, 20, SPEED_UP_AFTER_MS)).toEqual({ intervalSeconds: 20, changedAt: SPEED_UP_AFTER_MS, reason: undefined });
+    expect(speedUp(atTarget, 20, SPEED_UP_AFTER_MS)).toBe(atTarget);
+  });
+});
+
+describe('tickDelaySeconds', () => {
+  test('spreads one interval across the queried parts', () => {
+    expect(tickDelaySeconds(20, 4, 0)).toBe(5);
+  });
+
+  test('backs off on failures, up to the maximum', () => {
+    expect(tickDelaySeconds(20, 4, 2)).toBe(20);
+    expect(tickDelaySeconds(20, 4, 20)).toBe(MAX_INTERVAL_SECONDS);
+  });
+
+  test('copes with nothing to query', () => {
+    expect(tickDelaySeconds(20, 0, 0)).toBe(20);
+  });
+});

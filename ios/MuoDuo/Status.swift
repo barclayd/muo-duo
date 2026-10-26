@@ -16,6 +16,12 @@ struct Status: Decodable {
         let consecutiveFailures: Int
     }
 
+    /// How often each model is actually checked. Slower than configured after Apple pushes back.
+    struct Pace: Decodable {
+        let intervalSeconds: Int
+        let reason: String?
+    }
+
     struct Sighting: Decodable, Hashable {
         let part: String
         let storeNumber: String
@@ -33,6 +39,7 @@ struct Status: Decodable {
 
     let config: Config
     let health: Health
+    let pace: Pace
     /// Apple is answering, but even a model that's always in stock shows nothing, so "nothing in stock" may be wrong.
     let resultsMayBeStale: Bool
     let sightings: [Sighting]

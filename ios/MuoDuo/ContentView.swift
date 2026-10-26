@@ -95,8 +95,15 @@ private struct CheckerSection: View {
                 Text("Apple is answering, but even iPhone 17 shows no stock nearby.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+        } else if let reason = status.pace.reason {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Slowed to every \(status.pace.intervalSeconds)s", systemImage: "tortoise.fill")
+                    .foregroundStyle(.yellow)
+                Text("\(reason). Speeds back up after 30 minutes without pushback.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
         } else {
-            Label("Watching every \(status.config.intervalSeconds)s", systemImage: "checkmark.circle.fill")
+            Label("Watching every \(status.pace.intervalSeconds)s", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         }
     }
