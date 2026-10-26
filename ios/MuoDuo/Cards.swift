@@ -231,20 +231,14 @@ private struct InStockModel: View {
 
 // MARK: - Last seen
 
-/// When an iPhone Duo in the selected colour was last in stock, and the most recent sightings of any.
+/// When an iPhone Duo in the selected colour was last in stock.
 struct LastSeenCard: View {
     let status: Status
     let finish: Finish
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { _ in
-            VStack(alignment: .leading, spacing: 16) {
-                lastSeen
-                if !status.lastSeen.isEmpty {
-                    Divider()
-                    history
-                }
-            }
+            lastSeen
         }
         .card()
         .animation(.smooth, value: status.lastSeen)
@@ -279,28 +273,6 @@ struct LastSeenCard: View {
         .transition(.blurReplace)
     }
 
-    private var history: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            CardHeader(title: "Recent sightings", symbol: "clock.arrow.circlepath")
-            ForEach(status.lastSeen.prefix(4), id: \.self) { episode in
-                let phone = status.model(for: episode.part)
-                HStack(spacing: 12) {
-                    Circle().fill((phone?.finish ?? .nightSky).swatch.gradient).frame(width: 14, height: 14)
-                        .overlay(Circle().strokeBorder(.primary.opacity(0.2), lineWidth: 1))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(phone?.name ?? episode.part).font(.subheadline.weight(.semibold))
-                        Text(place(episode)).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text(episode.to, format: .relative(presentation: .named)).font(.caption.weight(.medium))
-                        Text(lasted(episode)).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-    }
-
     private func place(_ episode: Status.Episode) -> String {
         guard let area = status.area(of: episode.storeNumber), area.name != episode.storeName else { return episode.storeName }
         return "\(episode.storeName), \(area.name)"
@@ -310,50 +282,6 @@ struct LastSeenCard: View {
         let seconds = episode.to.timeIntervalSince(episode.from)
         guard seconds >= 60 else { return "briefly" }
         return "for " + Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes], width: .wide, maximumUnitCount: 2))
-    }
-}
-
-// MARK: - Activity
-
-/// The Worker's requests to Apple as they happen.
-struct ActivityCard: View {
-    let model: StatusModel
-    let status: Status
-    let finish: Finish
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    CardHeader(title: "Live activity", symbol: "waveform.path.ecg")
-                    LiveDot(color: status.state.color, trigger: model.pulses, size: 7)
-                }
-                VStack(spacing: 10) {
-                    ForEach(model.liveChecks.prefix(5)) { check in
-                        row(check, now: context.date)
-                            .transition(.asymmetric(insertion: .push(from: .top), removal: .identity))
-                    }
-                }
-                .animation(.snappy, value: model.liveChecks.first?.id)
-            }
-        }
-        .card()
-    }
-
-    private func row(_ check: Status.Check, now: Date) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: check.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                .foregroundStyle(check.ok ? finish.accent : .orange)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(check.area).font(.subheadline.weight(.semibold))
-                Text(status.model(for: check.part)?.name ?? check.part).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(check.ok ? "\(check.ms) ms" : "failed").font(.caption.weight(.medium)).monospacedDigit()
-                Text("\(Int(max(0, now.timeIntervalSince(check.at))))s ago").font(.caption).foregroundStyle(.secondary).monospacedDigit()
-            }
-        }
     }
 }
 

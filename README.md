@@ -27,6 +27,7 @@ Durable Object alarm (about once a second: 3 areas × 4 colour/capacity queries,
 - **One request at a time, alert straight away.** Each alarm asks one query, whichever was asked longest ago, and pushes as soon as the answer shows stock. Requests are spaced at least a second apart (`MIN_SECONDS_BETWEEN_REQUESTS`), so with 12 queries each one comes round every 12s, even with `intervalSeconds` at its 10s minimum. Stock is spotted ~6s after it appears on average.
 - **Alerts fire once per part@store.** A sighting is only remembered after a push was delivered, so a failed push retries on the next cycle.
 - **Last seen.** Every sighting is kept as a stretch of time a model was in stock at a store. Sightings less than 5 minutes apart join one stretch. The latest 20 are in `/status` as `lastSeen`, alongside `trackingSince`, so the app can say "Not yet" honestly.
+- **Stock log.** Each time a watched model comes into stock at a store, or goes again, it's logged with the store, Apple's pickup quote and how long it lasted, alongside the checker's own events: Apple failing and recovering, results looking stale and right again, and pauses. The latest 200 entries are in `/status` as `log`, newest first, with `loggingSince`. A model or store that's no longer watched drops out without being logged as gone.
 - **Silence is not "no stock".** After 3 failed checks in a row you get a "Stock checker is failing" push, and a "recovered" push when it comes back. Failures back off exponentially on top of the normal pace, capped at 15 minutes. A response with no stores at all counts as a failure.
 - **A canary for empty answers.** Every 10 minutes the checker also asks about iPhone 17 256GB in the first area, where it's reliably in stock. If it shows nothing 3 times running, Apple may be serving empty results, so you get a "Stock results may be stale" push and the app says so.
 - **A watchdog.** A cron every 5 minutes restarts the alarm loop if it ever stops.
@@ -37,7 +38,8 @@ Durable Object alarm (about once a second: 3 areas × 4 colour/capacity queries,
 
 The Worker does all the checking; the app only watches it, polling `/status` every 2 seconds while it's on screen.
 
-- **Live.** The Worker's last 30 requests to Apple are in `/status`. The app replays new ones at the pace they happened, so every check pulses: rings spread out from behind the phone, the toolbar badge ripples, the area's pins ripple on the map, and the ticker along the bottom names the area and model just checked.
+- **Live.** The Worker's last 30 requests to Apple are in `/status`. The app replays new ones at the pace they happened, so every check pulses: rings spread out from behind the phone, the toolbar badge ripples, the area's pins ripple on the map, and the ticker along the bottom names the area and model just checked. Tapping the ticker zooms it into a full-screen live view: each area and when it was last asked, Apple's average response time, and the latest requests to Apple as they happen.
+- **Stock log.** The home screen shows the latest of the Worker's log, grouped by day: where each model came into stock, at which store, and when it went again, so a night's stock can be read back in the morning. It updates as the app polls, and Show All opens the whole log a day at a time.
 - **In stock.** When anything is in stock, a green card appears straight under the colour picker: the capacity and colour, each store that has it and how long it's been there, and a Buy button. Apple's product pages are universal links for the Apple Store app, so Buy opens the model there, already chosen; pick the store for pickup at checkout, since no link can choose it for you. Safari is the fallback if the app isn't installed.
 - **Product images.** The hero shows Apple's own product shot for the selected colour, and the whole app takes that colour's look: Night Sky is the dusk desert from its wallpaper, with stars, Star White the dawn one. The images load from Apple's CDN at runtime and are cached on the device; they aren't in this repo.
 - **Liquid Glass.** Cards, colour and capacity pickers, the ticker, the toolbar and the full-screen store map's chips and store panel are all glass over a slowly drifting mesh-gradient sky.
@@ -88,7 +90,7 @@ All routes need `Authorization: Bearer <API_TOKEN>`.
 
 | Route | What it does |
 | --- | --- |
-| `GET /status` | Config, health, pace, current sightings, areas with their stores (name, city, coordinates, covered), `lastSeen`, `trackingSince`, `recentChecks`, device count, next check time, models with product and image URLs |
+| `GET /status` | Config, health, pace, current sightings, areas with their stores (name, city, coordinates, covered), `lastSeen`, `trackingSince`, `log`, `loggingSince`, `recentChecks`, device count, next check time, models with product and image URLs |
 | `POST /devices` | `{ "token": "<hex>", "environment": "sandbox" \| "production" }` |
 | `PUT /config` | Any of `{ "parts": [...], "areas": [{ "name", "search", "stores": ["R092", ...] }], "intervalSeconds": 10–3600, "paused": bool }`. Up to 6 areas of up to 12 stores each; new searches are checked against Apple first. |
 | `POST /check` | Run a check now and return the status |

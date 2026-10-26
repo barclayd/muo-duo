@@ -180,49 +180,62 @@ struct Radar: View {
     }
 }
 
-/// A glass bar along the bottom showing each check as it happens.
+/// A glass bar along the bottom showing each check as it happens. Tapping it opens the live activity.
 struct Ticker: View {
     let model: StatusModel
     let status: Status
     let finish: Finish
+    let open: () -> Void
 
     var body: some View {
         let check = model.liveChecks.first
         HStack(spacing: 14) {
-            Image(systemName: status.config.paused ? "pause.fill" : "dot.radiowaves.left.and.right")
-                .font(.title3)
-                .foregroundStyle(finish.accent)
-                .symbolEffect(.variableColor.iterative, options: .repeating, isActive: status.state == .live)
-                .frame(width: 28)
+            Button(action: open) {
+                HStack(spacing: 14) {
+                    Image(systemName: status.config.paused ? "pause.fill" : "dot.radiowaves.left.and.right")
+                        .font(.title3)
+                        .foregroundStyle(finish.accent)
+                        .symbolEffect(.variableColor.iterative, options: .repeating, isActive: status.state == .live)
+                        .frame(width: 28)
 
-            // The old line slides out as the new one slides in, so this is clipped to the text, not the capsule.
-            ZStack(alignment: .leading) {
-                VStack(alignment: .leading, spacing: 1) {
-                    if status.config.paused {
-                        Text("Checking is paused").font(.subheadline.weight(.semibold))
-                        Text("You won't get stock alerts").font(.caption).foregroundStyle(.secondary)
-                    } else if let check {
-                        Text(check.ok ? "Checked \(check.area)" : "\(check.area) didn't answer").font(.subheadline.weight(.semibold))
-                        Text("\(status.model(for: check.part)?.name ?? check.part) · \(check.ms) ms").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text("Waiting for the first check").font(.subheadline.weight(.semibold))
+                    // The old line slides out as the new one slides in, so this is clipped to the text, not the capsule.
+                    ZStack(alignment: .leading) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            if status.config.paused {
+                                Text("Checking is paused").font(.subheadline.weight(.semibold))
+                                Text("You won't get stock alerts").font(.caption).foregroundStyle(.secondary)
+                            } else if let check {
+                                Text(check.ok ? "Checked \(check.area)" : "\(check.area) didn't answer").font(.subheadline.weight(.semibold))
+                                Text("\(status.model(for: check.part)?.name ?? check.part) · \(check.ms) ms").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text("Waiting for the first check").font(.subheadline.weight(.semibold))
+                            }
+                        }
+                        .id(status.config.paused ? "paused" : check?.id)
+                        .transition(.push(from: .bottom))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .clipped()
+
+                    if !status.config.paused {
+                        Text("every \(status.pace.intervalSeconds)s")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                        Image(systemName: "chevron.up")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
                     }
                 }
-                .id(status.config.paused ? "paused" : check?.id)
-                .transition(.push(from: .bottom))
+                .contentShape(.rect)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows live activity")
 
             if status.config.paused {
                 Button("Resume") { Task { await model.setPaused(false) } }
                     .buttonStyle(.glassProminent)
                     .disabled(model.isWorking)
-            } else {
-                Text("every \(status.pace.intervalSeconds)s")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
             }
         }
         .padding(.leading, 18)
