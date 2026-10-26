@@ -4,7 +4,7 @@ import { Apns, type ApnsResult, type Device } from './apns';
 import { AppleError, fetchPickup, type Sighting, type Store } from './apple';
 import { type Area, DEFAULT_AREAS, DEFAULT_PARTS, imageUrl, MODELS, partsToQuery, productUrl } from './catalog';
 import { type Episode, recordSeen } from './history';
-import { cycleSeconds, isPushback, MIN_SECONDS_BETWEEN_REQUESTS, type Pace, slowDown, speedUp, tickDelaySeconds } from './pace';
+import { cycleSeconds, isPushback, MIN_SECONDS_BETWEEN_REQUESTS, type Pace, shouldAlertSlowdown, slowDown, speedUp, tickDelaySeconds } from './pace';
 
 export interface Config {
   areas: Area[];
@@ -250,7 +250,7 @@ export class Checker extends DurableObject<Env> {
       if (health.unhealthyAlerted) await this.notify(healthAlert('Stock checker recovered', 'Apple is responding again.'));
       Object.assign(health, { lastSuccessAt: health.lastCheckAt, lastError: undefined, consecutiveFailures: 0, unhealthyAlerted: false });
       pace = speedUp(pace, config.intervalSeconds, Date.now());
-      if (startingPace.intervalSeconds > config.intervalSeconds && pace.intervalSeconds <= config.intervalSeconds) {
+      if (startingPace.alerted && pace.intervalSeconds <= config.intervalSeconds) {
         const every = cycleSeconds(config.intervalSeconds, queries.length);
         await this.notify(healthAlert('Back to full speed', `Checks are every ${every}s again.`));
       }
@@ -263,13 +263,12 @@ export class Checker extends DurableObject<Env> {
       if (asking) this.logCheck(asking.query, false, asking.at);
       console.error(JSON.stringify({ event: 'check', ok: false, queries: batch.map((q) => q.key), ms: Date.now() - started, failures: health.consecutiveFailures, error: health.lastError }));
 
-      if (error instanceof AppleError && isPushback(error.status)) {
+      if (error instanceof AppleError && isPushback(error.status, health.consecutiveFailures)) {
         pace = slowDown(pace, config.intervalSeconds, health.lastError, Date.now());
-        // Tell once per episode, not on every doubling.
-        if (startingPace.intervalSeconds <= config.intervalSeconds) {
+        if (shouldAlertSlowdown(pace, config.intervalSeconds)) {
           const every = cycleSeconds(pace.intervalSeconds, queries.length);
-          const body = `${health.lastError}, so checks are now every ${every}s. They speed back up after 30 minutes without pushback.`;
-          await this.notify(healthAlert('Checking less often', body));
+          const body = `${health.lastError}, so checks are now every ${every}s. They speed back up after 2 minutes without pushback.`;
+          pace = { ...pace, alerted: (await this.notify(healthAlert('Checking less often', body))).delivered };
         }
       }
 

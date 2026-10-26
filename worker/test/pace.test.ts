@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { cycleSeconds, isPushback, MAX_INTERVAL_SECONDS, SPEED_UP_AFTER_MS, slowDown, speedUp, tickDelaySeconds } from '../src/pace';
+import { cycleSeconds, isPushback, MAX_INTERVAL_SECONDS, SPEED_UP_AFTER_MS, shouldAlertSlowdown, slowDown, speedUp, tickDelaySeconds } from '../src/pace';
 
 const atTarget = { intervalSeconds: 20, changedAt: 0 };
 
 describe('isPushback', () => {
   test('treats rate limiting and the bot shield as pushback, but not other errors', () => {
-    expect([403, 429, 503, 541].map(isPushback)).toEqual([true, true, true, true]);
-    expect([404, 500, undefined].map(isPushback)).toEqual([false, false, false]);
+    expect([403, 429, 541].map((status) => isPushback(status, 1))).toEqual([true, true, true]);
+    expect([404, 500, undefined].map((status) => isPushback(status, 5))).toEqual([false, false, false]);
+  });
+
+  test('lets a one-off 503 pass, but not a second failure in a row', () => {
+    expect(isPushback(503, 1)).toBe(false);
+    expect(isPushback(503, 2)).toBe(true);
   });
 });
 
@@ -22,12 +27,28 @@ describe('slowDown', () => {
   test('stops at the maximum', () => {
     expect(slowDown({ intervalSeconds: 600, changedAt: 0 }, 20, 'HTTP 429', 0).intervalSeconds).toBe(MAX_INTERVAL_SECONDS);
   });
+
+  test('remembers that the slow-down was announced', () => {
+    expect(slowDown({ intervalSeconds: 40, changedAt: 0, alerted: true }, 20, 'HTTP 429', 0).alerted).toBe(true);
+  });
+});
+
+describe('shouldAlertSlowdown', () => {
+  test('stays quiet for one slow-down, and speaks up at the second', () => {
+    const once = slowDown(atTarget, 20, 'HTTP 429', 0);
+    expect(shouldAlertSlowdown(once, 20)).toBe(false);
+    expect(shouldAlertSlowdown(slowDown(once, 20, 'HTTP 429', 0), 20)).toBe(true);
+  });
+
+  test('only speaks up once', () => {
+    expect(shouldAlertSlowdown({ intervalSeconds: 160, changedAt: 0, alerted: true }, 20)).toBe(false);
+  });
 });
 
 describe('speedUp', () => {
   const slowed = { intervalSeconds: 80, changedAt: 0, reason: 'HTTP 429' };
 
-  test('waits for half an hour without pushback', () => {
+  test('waits for two minutes without pushback', () => {
     expect(speedUp(slowed, 20, SPEED_UP_AFTER_MS - 1)).toBe(slowed);
   });
 
@@ -35,8 +56,8 @@ describe('speedUp', () => {
     expect(speedUp(slowed, 20, SPEED_UP_AFTER_MS)).toEqual({ intervalSeconds: 40, changedAt: SPEED_UP_AFTER_MS, reason: 'HTTP 429' });
   });
 
-  test('never goes faster than the target, and drops the reason once back at it', () => {
-    expect(speedUp({ ...slowed, intervalSeconds: 30 }, 20, SPEED_UP_AFTER_MS)).toEqual({ intervalSeconds: 20, changedAt: SPEED_UP_AFTER_MS, reason: undefined });
+  test('never goes faster than the target, and forgets the slow-down once back at it', () => {
+    expect(speedUp({ ...slowed, intervalSeconds: 30, alerted: true }, 20, SPEED_UP_AFTER_MS)).toStrictEqual({ intervalSeconds: 20, changedAt: SPEED_UP_AFTER_MS });
     expect(speedUp(atTarget, 20, SPEED_UP_AFTER_MS)).toBe(atTarget);
   });
 });
