@@ -1,0 +1,47 @@
+name: MuoDuo
+options:
+  bundleIdPrefix: com.barclayd
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: R2GGK3VN2C
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+
+targets:
+  MuoDuo:
+    type: application
+    platform: iOS
+    sources:
+      - path: MuoDuo
+        excludes: [AppIcon.icon]
+      # An Icon Composer bundle, so one file rather than a folder of SVGs.
+      - path: MuoDuo/AppIcon.icon
+        type: file
+        buildPhase: resources
+    configFiles:
+      Debug: Config/App.xcconfig
+      Release: Config/App.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.barclayd.muoduo
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+    entitlements:
+      path: MuoDuo/MuoDuo.entitlements
+      properties:
+        aps-environment: development
+        com.apple.developer.usernotifications.time-sensitive: true
+    info:
+      path: MuoDuo/Info.plist
+      properties:
+        CFBundleDisplayName: Muo Duo
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        MuoDuoAPIBaseURL: $(MUODUO_API_BASE_URL)
+        MuoDuoAPIToken: $(MUODUO_API_TOKEN)

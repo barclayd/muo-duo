@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "muo-duo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "account_id": "3343118697a4beccae42090c4520cd29",
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [{ "name": "CHECKER", "class_name": "Checker" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Checker"] }],
+  // The Checker reschedules itself via Durable Object alarms; this cron is only a watchdog
+  // that restarts the alarm chain if it ever breaks.
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "vars": {
+    "APNS_TEAM_ID": "R2GGK3VN2C",
+    "APNS_TOPIC": "com.barclayd.muoduo"
+  }
+  // Secrets (wrangler secret put): API_TOKEN, APNS_KEY, APNS_KEY_ID
+}
