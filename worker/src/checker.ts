@@ -4,6 +4,7 @@ import { Apns, type ApnsResult, type Device } from './apns';
 import { AppleError, fetchPickup, type Sighting, type Store } from './apple';
 import { type Area, DEFAULT_AREAS, DEFAULT_PARTS, imageUrl, MODELS, partsToQuery, productUrl } from './catalog';
 import { type Episode, recordSeen } from './history';
+import { type CheckerNote, emptyLog, note, recordStock, type StockLog } from './log';
 import { cycleSeconds, isPushback, MIN_SECONDS_BETWEEN_REQUESTS, type Pace, shouldAlertSlowdown, slowDown, speedUp, tickDelaySeconds } from './pace';
 
 export interface Config {
@@ -90,6 +91,7 @@ export class Checker extends DurableObject<Env> {
     const results = await this.results(queries);
     const stores = await this.stores();
     const seen = await this.ctx.storage.get<Seen>('seen');
+    const log = await this.ctx.storage.get<StockLog>('log');
     const slowed = pace.intervalSeconds > config.intervalSeconds;
 
     return {
@@ -118,6 +120,9 @@ export class Checker extends DurableObject<Env> {
         .slice(0, LAST_SEEN)
         .map((e) => ({ ...e, from: iso(e.from), to: iso(e.to) })),
       trackingSince: seen ? iso(seen.since) : null,
+      // Newest first.
+      log: (log?.entries ?? []).toReversed(),
+      loggingSince: log ? log.since : null,
       recentChecks: this.recentChecks.toReversed(),
       devices: (await this.devices()).length,
       nextCheckAt: alarm === null ? null : iso(alarm),
@@ -145,7 +150,12 @@ export class Checker extends DurableObject<Env> {
 
     const config = { ...previous, ...patch };
     // Forget answers to queries no longer asked, so asking them again can't alert on old stock.
-    await this.ctx.storage.put({ config, results: await this.results(queriesFor(config)) });
+    const writes: Record<string, unknown> = { config, results: await this.results(queriesFor(config)) };
+    if (config.paused !== previous.paused) {
+      const log = (await this.ctx.storage.get<StockLog>('log')) ?? emptyLog(iso(Date.now()));
+      writes.log = note(log, { kind: config.paused ? 'paused' : 'resumed' }, iso(Date.now()));
+    }
+    await this.ctx.storage.put(writes);
     if (config.paused) await this.ctx.storage.deleteAlarm();
     else await this.ensureRunning();
   }
@@ -209,6 +219,12 @@ export class Checker extends DurableObject<Env> {
     const storedSeen = await this.ctx.storage.get<Seen>('seen');
     const seen = storedSeen ?? { since: started, episodes: [] };
     let episodes = seen.episodes;
+    // Applied to the stored log at the end, so a pause logged while Apple was being asked isn't lost.
+    const logChanges: ((log: StockLog) => StockLog)[] = [];
+    const logNote = (entry: CheckerNote) => {
+      const at = iso(Date.now());
+      logChanges.push((log) => note(log, entry, at));
+    };
     let asking: { query: Query; at: number } | undefined;
 
     try {
@@ -237,6 +253,10 @@ export class Checker extends DurableObject<Env> {
 
       const previous = await this.sightings();
       const current = currentSightings(Object.values(results).map((r) => r.sightings), config.parts);
+      if (health.consecutiveFailures >= FAILURES_BEFORE_ALERT) logNote({ kind: 'recovered' });
+      const watching = (s: Sighting) => config.parts.includes(s.part) && config.areas.some((a) => a.stores.includes(s.storeNumber));
+      const answeredAt = iso(Date.now());
+      logChanges.push((log) => recordStock(log, current, watching, answeredAt));
       const fresh = newSightings(previous, current);
       // Only remember sightings once someone has been told, so a failed push retries next time.
       const delivered = fresh.length === 0 || (await this.notify(stockAlert(fresh))).delivered;
@@ -245,7 +265,7 @@ export class Checker extends DurableObject<Env> {
       episodes = recordSeen(episodes, currentSightings([observed], config.parts), Date.now(), EPISODE_GAP_MS);
 
       const canaryDue = !health.lastCanaryAt || Date.now() - Date.parse(health.lastCanaryAt) >= CANARY_INTERVAL_MS;
-      if (canaryDue) await this.canary(config, health);
+      if (canaryDue) await this.canary(config, health, logNote);
 
       if (health.unhealthyAlerted) await this.notify(healthAlert('Stock checker recovered', 'Apple is responding again.'));
       Object.assign(health, { lastSuccessAt: health.lastCheckAt, lastError: undefined, consecutiveFailures: 0, unhealthyAlerted: false });
@@ -260,6 +280,7 @@ export class Checker extends DurableObject<Env> {
       const message = error instanceof Error ? error.message : String(error);
       health.consecutiveFailures += 1;
       health.lastError = asking ? `${asking.query.area.name}: ${message}` : message;
+      if (health.consecutiveFailures === FAILURES_BEFORE_ALERT) logNote({ kind: 'failing', detail: health.lastError });
       if (asking) this.logCheck(asking.query, false, asking.at);
       console.error(JSON.stringify({ event: 'check', ok: false, queries: batch.map((q) => q.key), ms: Date.now() - started, failures: health.consecutiveFailures, error: health.lastError }));
 
@@ -281,6 +302,9 @@ export class Checker extends DurableObject<Env> {
       if (storesChanged) writes.stores = stores;
       if (!storedSeen || episodes !== seen.episodes) writes.seen = { since: seen.since, episodes };
       if (pace !== startingPace) writes.pace = pace;
+      const storedLog = await this.ctx.storage.get<StockLog>('log');
+      const log = logChanges.reduce((log, change) => change(log), storedLog ?? emptyLog(iso(started)));
+      if (log !== storedLog) writes.log = log;
       await this.ctx.storage.put(writes);
       this.running = false;
     }
@@ -291,13 +315,15 @@ export class Checker extends DurableObject<Env> {
     if (this.recentChecks.length > RECENT_CHECKS) this.recentChecks.shift();
   }
 
-  private async canary(config: Config, health: Health) {
+  private async canary(config: Config, health: Health, logNote: (entry: CheckerNote) => void) {
     const area = config.areas[0];
     if (!area) return;
     await scheduler.wait(MIN_SECONDS_BETWEEN_REQUESTS * 1000);
     const seen = (await fetchPickup(CANARY_PART, area.search)).sightings.length > 0;
     health.lastCanaryAt = new Date().toISOString();
+    if (seen && health.canaryMisses >= CANARY_MISSES_BEFORE_ALERT) logNote({ kind: 'normal' });
     health.canaryMisses = seen ? 0 : health.canaryMisses + 1;
+    if (health.canaryMisses === CANARY_MISSES_BEFORE_ALERT) logNote({ kind: 'stale', detail: area.name });
 
     if (seen && health.staleAlerted) {
       await this.notify(healthAlert('Stock results look normal again', 'Apple is returning stock data again.'));
