@@ -25,8 +25,16 @@ export function speedUp(pace: Pace, targetSeconds: number, now: number): Pace {
   return { intervalSeconds, changedAt: now, reason: intervalSeconds > targetSeconds ? pace.reason : undefined };
 }
 
-// One request per tick, so every queried part is asked about once per interval. Failures back off
-// on top of that.
+// A ceiling on what Apple sees, however many areas and models are watched.
+export const MIN_SECONDS_BETWEEN_REQUESTS = 1;
+
+// How long each query takes to come round again: the interval, unless there are more queries than
+// fit in it at one request a second.
+export const cycleSeconds = (intervalSeconds: number, queries: number) =>
+  Math.max(intervalSeconds, queries * MIN_SECONDS_BETWEEN_REQUESTS);
+
+// One request per tick, so every query is asked once per cycle. Failures back off on top of that.
 export function tickDelaySeconds(intervalSeconds: number, queries: number, consecutiveFailures: number) {
-  return Math.min((intervalSeconds / Math.max(queries, 1)) * 2 ** consecutiveFailures, MAX_INTERVAL_SECONDS);
+  const perQuery = cycleSeconds(intervalSeconds, queries) / Math.max(queries, 1);
+  return Math.min(perQuery * 2 ** consecutiveFailures, MAX_INTERVAL_SECONDS);
 }

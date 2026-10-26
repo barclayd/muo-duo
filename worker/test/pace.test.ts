@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isPushback, MAX_INTERVAL_SECONDS, SPEED_UP_AFTER_MS, slowDown, speedUp, tickDelaySeconds } from '../src/pace';
+import { cycleSeconds, isPushback, MAX_INTERVAL_SECONDS, SPEED_UP_AFTER_MS, slowDown, speedUp, tickDelaySeconds } from '../src/pace';
 
 const atTarget = { intervalSeconds: 20, changedAt: 0 };
 
@@ -41,6 +41,16 @@ describe('speedUp', () => {
   });
 });
 
+describe('cycleSeconds', () => {
+  test('is the interval when the queries fit in it', () => {
+    expect(cycleSeconds(20, 12)).toBe(20);
+  });
+
+  test('stretches to one request a second when they do not', () => {
+    expect(cycleSeconds(10, 12)).toBe(12);
+  });
+});
+
 describe('tickDelaySeconds', () => {
   test('spreads one interval across the queried parts', () => {
     expect(tickDelaySeconds(20, 4, 0)).toBe(5);
@@ -49,6 +59,11 @@ describe('tickDelaySeconds', () => {
   test('backs off on failures, up to the maximum', () => {
     expect(tickDelaySeconds(20, 4, 2)).toBe(20);
     expect(tickDelaySeconds(20, 4, 20)).toBe(MAX_INTERVAL_SECONDS);
+  });
+
+  test('never asks Apple more than once a second', () => {
+    expect(tickDelaySeconds(10, 12, 0)).toBe(1);
+    expect(tickDelaySeconds(10, 40, 0)).toBe(1);
   });
 
   test('copes with nothing to query', () => {

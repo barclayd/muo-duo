@@ -12,6 +12,20 @@ export interface Sighting {
   quote: string;
 }
 
+export interface Store {
+  number: string;
+  name: string;
+  city: string;
+  latitude: number;
+  longitude: number;
+}
+
+// The 12 stores nearest the location asked about, however far away, and what they have in stock.
+export interface Pickup {
+  stores: Store[];
+  sightings: Sighting[];
+}
+
 export class AppleError extends Error {
   constructor(
     message: string,
@@ -24,36 +38,53 @@ export class AppleError extends Error {
 interface PickupResponse {
   body?: {
     PickupMessage?: {
+      errorMessage?: string;
       stores?: {
         storeNumber: string;
         storeName: string;
+        city?: string;
+        storelatitude?: number;
+        storelongitude?: number;
         partsAvailability?: Record<string, { pickupDisplay?: string; pickupSearchQuote?: string }>;
       }[];
     };
   };
 }
 
-export function parsePickup(json: unknown): Sighting[] {
-  const stores = (json as PickupResponse).body?.PickupMessage?.stores;
+export function parsePickup(json: unknown): Pickup {
+  const message = (json as PickupResponse).body?.PickupMessage;
+  const stores = message?.stores;
   if (!Array.isArray(stores)) throw new AppleError('Unexpected response shape: no PickupMessage.stores');
   // An empty store list would read as "nothing in stock", so treat it as a failed check instead.
-  if (stores.length === 0) throw new AppleError('Apple returned no stores for this postcode');
+  // Apple says why when it can't place the location, e.g. a town name it doesn't recognise.
+  if (stores.length === 0) throw new AppleError(message?.errorMessage ? `Apple found no stores: ${message.errorMessage}` : 'Apple returned no stores');
 
-  return stores.flatMap((store) =>
-    Object.entries(store.partsAvailability ?? {})
-      .filter(([, availability]) => availability.pickupDisplay === 'available')
-      .map(([part, availability]) => ({
-        part,
-        storeNumber: store.storeNumber,
-        storeName: store.storeName,
-        quote: availability.pickupSearchQuote ?? 'Available',
-      })),
-  );
+  return {
+    stores: stores.map((store) => ({
+      number: store.storeNumber,
+      name: store.storeName,
+      city: store.city ?? '',
+      latitude: Number(store.storelatitude),
+      longitude: Number(store.storelongitude),
+    })),
+    sightings: stores.flatMap((store) =>
+      Object.entries(store.partsAvailability ?? {})
+        .filter(([, availability]) => availability.pickupDisplay === 'available')
+        .map(([part, availability]) => ({
+          part,
+          storeNumber: store.storeNumber,
+          storeName: store.storeName,
+          quote: availability.pickupSearchQuote ?? 'Available',
+        })),
+    ),
+  };
 }
 
-export async function fetchPickup(part: string, postcode: string): Promise<Sighting[]> {
+// `location` is a postcode or a town name. Postcodes are safer: Apple doesn't recognise every town
+// (Brighton finds nothing) and muddles ambiguous ones (for Dorchester it measures from Oxfordshire).
+export async function fetchPickup(part: string, location: string): Promise<Pickup> {
   const url = new URL('https://www.apple.com/uk/shop/pickup-message-recommendations');
-  url.search = new URLSearchParams({ fae: 'true', 'mts.0': 'regular', location: postcode, product: part }).toString();
+  url.search = new URLSearchParams({ fae: 'true', 'mts.0': 'regular', location, product: part }).toString();
 
   const res = await fetch(url, {
     headers: {

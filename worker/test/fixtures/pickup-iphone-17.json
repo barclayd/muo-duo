@@ -9,6 +9,9 @@
         {
           "storeNumber": "R226",
           "storeName": "White City",
+          "city": "London",
+          "storelatitude": 51.5074,
+          "storelongitude": -0.22094,
           "partsAvailability": {
             "MG6M4QN/A": {
               "partNumber": "MG6M4QN/A",
@@ -33,11 +36,17 @@
         {
           "storeNumber": "R329",
           "storeName": "Brompton Road",
+          "city": "London",
+          "storelatitude": 51.50129,
+          "storelongitude": -0.16096,
           "partsAvailability": {}
         },
         {
           "storeNumber": "R092",
           "storeName": "Regent Street",
+          "city": "London",
+          "storelatitude": 51.51424,
+          "storelongitude": -0.14214,
           "partsAvailability": {}
         }
       ],

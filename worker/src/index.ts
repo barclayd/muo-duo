@@ -1,4 +1,4 @@
-import { isKnownPart } from './catalog';
+import { type Area, isKnownPart } from './catalog';
 import type { Config } from './checker';
 
 export { Checker } from './checker';
@@ -14,9 +14,29 @@ function authorised(req: Request, env: Env) {
   return given.byteLength === expected.byteLength && crypto.subtle.timingSafeEqual(given, expected);
 }
 
+const MAX_AREAS = 6;
+
+const shortText = (value: unknown) => (typeof value === 'string' && /^.{1,40}$/.test(value.trim()) ? value.trim() : undefined);
+
+// Apple lists the 12 stores nearest a search, so an area can watch at most 12.
+function parseAreas(areas: unknown): Area[] | string {
+  const invalid = `areas must be a list of 1 to ${MAX_AREAS} { name, search, stores }, with up to 12 store numbers like R092`;
+  if (!Array.isArray(areas) || areas.length === 0 || areas.length > MAX_AREAS) return invalid;
+  const parsed: Area[] = [];
+  for (const area of areas) {
+    const { name, search, stores } = (area ?? {}) as Record<string, unknown>;
+    const storesOk = Array.isArray(stores) && stores.length > 0 && stores.length <= 12 && stores.every((s) => typeof s === 'string' && /^R\d{3,4}$/.test(s));
+    const [n, s] = [shortText(name), shortText(search)];
+    if (!n || !s || !storesOk) return invalid;
+    parsed.push({ name: n, search: s, stores: [...new Set(stores as string[])] });
+  }
+  if (new Set(parsed.map((a) => a.search.toUpperCase())).size < parsed.length) return 'each area needs its own search';
+  return parsed;
+}
+
 function parseConfigPatch(body: unknown): Partial<Config> | string {
   if (typeof body !== 'object' || body === null) return 'Expected a JSON object';
-  const { parts, postcode, intervalSeconds, paused } = body as Record<string, unknown>;
+  const { parts, areas, intervalSeconds, paused } = body as Record<string, unknown>;
   const patch: Partial<Config> = {};
 
   if (parts !== undefined) {
@@ -25,9 +45,10 @@ function parseConfigPatch(body: unknown): Partial<Config> | string {
     }
     patch.parts = [...new Set(parts as string[])];
   }
-  if (postcode !== undefined) {
-    if (typeof postcode !== 'string' || !/^[A-Z0-9 ]{5,8}$/i.test(postcode.trim())) return 'postcode is not a UK postcode';
-    patch.postcode = postcode.trim().toUpperCase();
+  if (areas !== undefined) {
+    const parsed = parseAreas(areas);
+    if (typeof parsed === 'string') return parsed;
+    patch.areas = parsed;
   }
   if (intervalSeconds !== undefined) {
     if (!Number.isInteger(intervalSeconds) || (intervalSeconds as number) < 10 || (intervalSeconds as number) > 3600) {
@@ -62,7 +83,9 @@ export default {
       case 'PUT /config': {
         const patch = parseConfigPatch(await req.json().catch(() => null));
         if (typeof patch === 'string') return json({ error: patch }, 400);
-        await stub.updateConfig(patch);
+        // Apple is asked about any new area first, so a search that finds the wrong stores is refused.
+        const error = await stub.updateConfig(patch);
+        if (error) return json({ error }, 400);
         return json(await stub.status());
       }
 

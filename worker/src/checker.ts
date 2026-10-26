@@ -1,12 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import { currentSightings, healthAlert, newSightings, stockAlert } from './alerts';
 import { Apns, type ApnsResult, type Device } from './apns';
-import { AppleError, fetchPickup, type Sighting } from './apple';
-import { DEFAULT_PARTS, MODELS, partsToQuery, productUrl } from './catalog';
-import { isPushback, type Pace, slowDown, speedUp, tickDelaySeconds } from './pace';
+import { AppleError, fetchPickup, type Sighting, type Store } from './apple';
+import { type Area, DEFAULT_AREAS, DEFAULT_PARTS, imageUrl, MODELS, partsToQuery, productUrl } from './catalog';
+import { type Episode, recordSeen } from './history';
+import { cycleSeconds, isPushback, MIN_SECONDS_BETWEEN_REQUESTS, type Pace, slowDown, speedUp, tickDelaySeconds } from './pace';
 
 export interface Config {
-  postcode: string;
+  areas: Area[];
   parts: string[];
   intervalSeconds: number;
   paused: boolean;
@@ -23,12 +24,39 @@ export interface Health {
   staleAlerted: boolean;
 }
 
-// When each part was last asked about, and its last good answer.
-type Results = Record<string, { askedAt: number; sightings: Sighting[] }>;
+// One model asked about in one area.
+interface Query {
+  key: string;
+  area: Area;
+  part: string;
+}
 
-const DEFAULT_CONFIG: Config = { postcode: 'NW6 5PU', parts: DEFAULT_PARTS, intervalSeconds: 20, paused: false };
+// When each query was last asked, its last good answer (stores in its area only), and any of the
+// area's stores Apple left out of that answer, which therefore aren't being watched.
+type Results = Record<string, { askedAt: number; sightings: Sighting[]; missing?: string[] }>;
+
+// Every stretch of stock seen since tracking began, for "last seen in stock".
+interface Seen {
+  since: number;
+  episodes: readonly Episode[];
+}
+
+// A check as it happened, for the app's live view. Kept in memory only.
+interface Check {
+  at: string;
+  area: string;
+  part: string;
+  ok: boolean;
+  ms: number;
+}
+
+const DEFAULT_CONFIG: Config = { areas: DEFAULT_AREAS, parts: DEFAULT_PARTS, intervalSeconds: 20, paused: false };
 const FAILURES_BEFORE_ALERT = 3;
-const GAP_BETWEEN_REQUESTS_MS = 2_000;
+const RECENT_CHECKS = 30;
+const LAST_SEEN = 20;
+
+// Seen again within this long counts as the same stretch of stock.
+const EPISODE_GAP_MS = 5 * 60_000;
 
 // iPhone 17 256GB is reliably in stock around London. If even it shows nothing anywhere, Apple is
 // probably serving empty results, which would otherwise look exactly like "no Duo in stock".
@@ -36,29 +64,64 @@ const CANARY_PART = 'MG6N4QN/A';
 const CANARY_INTERVAL_MS = 10 * 60_000;
 const CANARY_MISSES_BEFORE_ALERT = 3;
 
+// Models take turns with areas, so each area comes round every few seconds rather than in a burst.
+function queriesFor(config: Config): Query[] {
+  return partsToQuery(config.parts).flatMap((part) => config.areas.map((area) => ({ key: `${part}|${area.search}`, area, part })));
+}
+
+const iso = (ms: number) => new Date(ms).toISOString();
+
 // Single instance that polls Apple on a self-rescheduling alarm and pushes to registered devices.
-// Each alarm asks about one part, taking turns, so requests are spread evenly and stock is pushed as
-// soon as any one answer shows it. A tick writes only its answer, health and the next alarm, three
-// storage rows, so even at 10s this stays well inside the paid plan's 50 million writes a month.
+// Each alarm asks about one model in one area, taking turns, so requests are spread evenly and stock
+// is pushed as soon as any one answer shows it. A tick usually writes only its answer, health and the
+// next alarm, three storage rows, so even at one request a second this stays well inside the paid
+// plan's 50 million writes a month.
 export class Checker extends DurableObject<Env> {
   private running = false;
   private apns?: Apns;
+  private recentChecks: Check[] = [];
 
   async status() {
     const alarm = await this.ctx.storage.getAlarm();
     const config = await this.config();
     const health = await this.health();
     const pace = await this.pace(config);
+    const queries = queriesFor(config);
+    const results = await this.results(queries);
+    const stores = await this.stores();
+    const seen = await this.ctx.storage.get<Seen>('seen');
     const slowed = pace.intervalSeconds > config.intervalSeconds;
+
     return {
       config,
       health,
-      pace: { intervalSeconds: slowed ? pace.intervalSeconds : config.intervalSeconds, reason: slowed ? pace.reason : undefined },
+      pace: {
+        intervalSeconds: cycleSeconds(Math.max(pace.intervalSeconds, config.intervalSeconds), queries.length),
+        reason: slowed ? pace.reason : undefined,
+      },
       resultsMayBeStale: health.canaryMisses >= CANARY_MISSES_BEFORE_ALERT,
       sightings: await this.sightings(),
+      areas: config.areas.map((area) => {
+        const missing = new Set(queries.filter((q) => q.area === area).flatMap((q) => results[q.key]?.missing ?? []));
+        return {
+          name: area.name,
+          search: area.search,
+          // A store's name and place come from Apple's answers, so they're missing until it's been asked.
+          stores: area.stores.map((number) => {
+            const store: Store | undefined = stores[number];
+            return { number, name: store?.name ?? number, city: store?.city, latitude: store?.latitude, longitude: store?.longitude, covered: !missing.has(number) };
+          }),
+        };
+      }),
+      lastSeen: (seen?.episodes ?? [])
+        .toSorted((a, b) => b.to - a.to)
+        .slice(0, LAST_SEEN)
+        .map((e) => ({ ...e, from: iso(e.from), to: iso(e.to) })),
+      trackingSince: seen ? iso(seen.since) : null,
+      recentChecks: this.recentChecks.toReversed(),
       devices: (await this.devices()).length,
-      nextCheckAt: alarm === null ? null : new Date(alarm).toISOString(),
-      models: MODELS.map((m) => ({ ...m, url: productUrl(m) })),
+      nextCheckAt: alarm === null ? null : iso(alarm),
+      models: MODELS.map((m) => ({ ...m, url: productUrl(m), imageUrl: imageUrl(m) })),
     };
   }
 
@@ -69,19 +132,27 @@ export class Checker extends DurableObject<Env> {
     await this.ensureRunning();
   }
 
-  async updateConfig(patch: Partial<Config>) {
-    const config = { ...(await this.config()), ...patch };
-    // Forget answers about parts no longer asked about, so watching them again can't alert on old stock.
-    const queried = new Set(partsToQuery(config.parts));
-    const results = Object.fromEntries(Object.entries(await this.results()).filter(([part]) => queried.has(part)));
-    await this.ctx.storage.put({ config, results });
+  // Returns an error if Apple doesn't list a new area's stores near its search.
+  async updateConfig(patch: Partial<Config>): Promise<string | undefined> {
+    const previous = await this.config();
+    for (const area of patch.areas ?? []) {
+      if (previous.areas.some((a) => a.search === area.search)) continue;
+      const answer = await fetchPickup(CANARY_PART, area.search).catch((e: Error) => e);
+      if (answer instanceof Error) return `${area.name}: ${answer.message}`;
+      const missing = area.stores.filter((number) => !answer.stores.some((s) => s.number === number));
+      if (missing.length > 0) return `${area.name}: Apple doesn't list ${missing.join(', ')} among the 12 stores nearest ${area.search}`;
+    }
+
+    const config = { ...previous, ...patch };
+    // Forget answers to queries no longer asked, so asking them again can't alert on old stock.
+    await this.ctx.storage.put({ config, results: await this.results(queriesFor(config)) });
     if (config.paused) await this.ctx.storage.deleteAlarm();
     else await this.ensureRunning();
   }
 
   async checkNow() {
     const config = await this.config();
-    await this.runCycle(config, partsToQuery(config.parts));
+    await this.runCycle(config, queriesFor(config));
     return this.status();
   }
 
@@ -105,12 +176,12 @@ export class Checker extends DurableObject<Env> {
     if (config.paused) return;
     const started = Date.now();
 
-    const queries = partsToQuery(config.parts);
+    const queries = queriesFor(config);
     if (queries.length > 0) {
-      const results = await this.results();
-      // Ask about whichever part was asked about longest ago, so the parts take turns and one that
-      // keeps failing can't hold up the others.
-      const next = queries.reduce((a, b) => ((results[b]?.askedAt ?? 0) < (results[a]?.askedAt ?? 0) ? b : a));
+      const results = await this.results(queries);
+      // Ask whichever query was asked longest ago, so they take turns and one that keeps failing
+      // can't hold up the others.
+      const next = queries.reduce((a, b) => ((results[b.key]?.askedAt ?? 0) < (results[a.key]?.askedAt ?? 0) ? b : a));
       await this.runCycle(config, [next]);
     }
 
@@ -121,7 +192,7 @@ export class Checker extends DurableObject<Env> {
     await this.ctx.storage.setAlarm(started + delaySeconds * (0.9 + Math.random() * 0.2) * 1000);
   }
 
-  private async runCycle(config: Config, parts: readonly string[]) {
+  private async runCycle(config: Config, batch: readonly Query[]) {
     if (this.running) return;
     this.running = true;
 
@@ -129,16 +200,40 @@ export class Checker extends DurableObject<Env> {
     const startingPace = await this.pace(config);
     let pace = startingPace;
     const started = Date.now();
-    health.lastCheckAt = new Date(started).toISOString();
+    health.lastCheckAt = iso(started);
 
-    const results = await this.results();
+    const queries = queriesFor(config);
+    const results = await this.results(queries);
+    const stores = await this.stores();
+    let storesChanged = false;
+    const storedSeen = await this.ctx.storage.get<Seen>('seen');
+    const seen = storedSeen ?? { since: started, episodes: [] };
+    let episodes = seen.episodes;
+    let asking: { query: Query; at: number } | undefined;
+
     try {
-      for (const [i, part] of parts.entries()) {
-        if (i > 0) await scheduler.wait(GAP_BETWEEN_REQUESTS_MS);
-        // A failed request keeps the part's last good answer.
-        results[part] = { sightings: results[part]?.sightings ?? [], askedAt: Date.now() };
-        results[part].sightings = await fetchPickup(part, config.postcode);
+      const observed: Sighting[] = [];
+      for (const [i, query] of batch.entries()) {
+        if (i > 0) await scheduler.wait(MIN_SECONDS_BETWEEN_REQUESTS * 1000);
+        asking = { query, at: Date.now() };
+        // A failed request keeps the last good answer.
+        results[query.key] = { ...(results[query.key] ?? { sightings: [] }), askedAt: asking.at };
+
+        const answer = await fetchPickup(query.part, query.area.search);
+        const watched = new Set(query.area.stores);
+        const sightings = answer.sightings.filter((s) => watched.has(s.storeNumber));
+        const missing = query.area.stores.filter((number) => !answer.stores.some((s) => s.number === number));
+        results[query.key] = { askedAt: asking.at, sightings, missing };
+        for (const store of answer.stores) {
+          if (watched.has(store.number) && JSON.stringify(stores[store.number]) !== JSON.stringify(store)) {
+            stores[store.number] = store;
+            storesChanged = true;
+          }
+        }
+        observed.push(...sightings);
+        this.logCheck(query, true, asking.at);
       }
+      asking = undefined;
 
       const previous = await this.sightings();
       const current = currentSightings(Object.values(results).map((r) => r.sightings), config.parts);
@@ -146,6 +241,8 @@ export class Checker extends DurableObject<Env> {
       // Only remember sightings once someone has been told, so a failed push retries next time.
       const delivered = fresh.length === 0 || (await this.notify(stockAlert(fresh))).delivered;
       if (delivered && JSON.stringify(current) !== JSON.stringify(previous)) await this.ctx.storage.put('sightings', current);
+      // History counts only what was seen just now, not answers carried over from earlier checks.
+      episodes = recordSeen(episodes, currentSightings([observed], config.parts), Date.now(), EPISODE_GAP_MS);
 
       const canaryDue = !health.lastCanaryAt || Date.now() - Date.parse(health.lastCanaryAt) >= CANARY_INTERVAL_MS;
       if (canaryDue) await this.canary(config, health);
@@ -154,19 +251,24 @@ export class Checker extends DurableObject<Env> {
       Object.assign(health, { lastSuccessAt: health.lastCheckAt, lastError: undefined, consecutiveFailures: 0, unhealthyAlerted: false });
       pace = speedUp(pace, config.intervalSeconds, Date.now());
       if (startingPace.intervalSeconds > config.intervalSeconds && pace.intervalSeconds <= config.intervalSeconds) {
-        await this.notify(healthAlert('Back to full speed', `Checks are every ${config.intervalSeconds}s again.`));
+        const every = cycleSeconds(config.intervalSeconds, queries.length);
+        await this.notify(healthAlert('Back to full speed', `Checks are every ${every}s again.`));
       }
-      console.log(JSON.stringify({ event: 'check', ok: true, parts, ms: Date.now() - started, inStock: current.length, fresh: fresh.length, delivered, canaryMisses: health.canaryMisses, intervalSeconds: pace.intervalSeconds }));
+      const missing = batch.flatMap((q) => results[q.key]?.missing ?? []);
+      console.log(JSON.stringify({ event: 'check', ok: true, queries: batch.map((q) => q.key), ms: Date.now() - started, inStock: current.length, fresh: fresh.length, delivered, missing, canaryMisses: health.canaryMisses, intervalSeconds: pace.intervalSeconds }));
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       health.consecutiveFailures += 1;
-      health.lastError = error instanceof Error ? error.message : String(error);
-      console.error(JSON.stringify({ event: 'check', ok: false, parts, ms: Date.now() - started, failures: health.consecutiveFailures, error: health.lastError }));
+      health.lastError = asking ? `${asking.query.area.name}: ${message}` : message;
+      if (asking) this.logCheck(asking.query, false, asking.at);
+      console.error(JSON.stringify({ event: 'check', ok: false, queries: batch.map((q) => q.key), ms: Date.now() - started, failures: health.consecutiveFailures, error: health.lastError }));
 
       if (error instanceof AppleError && isPushback(error.status)) {
         pace = slowDown(pace, config.intervalSeconds, health.lastError, Date.now());
         // Tell once per episode, not on every doubling.
         if (startingPace.intervalSeconds <= config.intervalSeconds) {
-          const body = `${health.lastError}, so checks are now every ${pace.intervalSeconds}s. They speed back up after 30 minutes without pushback.`;
+          const every = cycleSeconds(pace.intervalSeconds, queries.length);
+          const body = `${health.lastError}, so checks are now every ${every}s. They speed back up after 30 minutes without pushback.`;
           await this.notify(healthAlert('Checking less often', body));
         }
       }
@@ -176,15 +278,25 @@ export class Checker extends DurableObject<Env> {
         health.unhealthyAlerted = (await this.notify(healthAlert('Stock checker is failing', body))).delivered;
       }
     } finally {
-      await this.ctx.storage.put({ health, results });
-      if (pace !== startingPace) await this.ctx.storage.put('pace', pace);
+      const writes: Record<string, unknown> = { health, results };
+      if (storesChanged) writes.stores = stores;
+      if (!storedSeen || episodes !== seen.episodes) writes.seen = { since: seen.since, episodes };
+      if (pace !== startingPace) writes.pace = pace;
+      await this.ctx.storage.put(writes);
       this.running = false;
     }
   }
 
+  private logCheck(query: Query, ok: boolean, at: number) {
+    this.recentChecks.push({ at: iso(at), area: query.area.name, part: query.part, ok, ms: Date.now() - at });
+    if (this.recentChecks.length > RECENT_CHECKS) this.recentChecks.shift();
+  }
+
   private async canary(config: Config, health: Health) {
-    await scheduler.wait(GAP_BETWEEN_REQUESTS_MS);
-    const seen = (await fetchPickup(CANARY_PART, config.postcode)).length > 0;
+    const area = config.areas[0];
+    if (!area) return;
+    await scheduler.wait(MIN_SECONDS_BETWEEN_REQUESTS * 1000);
+    const seen = (await fetchPickup(CANARY_PART, area.search)).sightings.length > 0;
     health.lastCanaryAt = new Date().toISOString();
     health.canaryMisses = seen ? 0 : health.canaryMisses + 1;
 
@@ -192,7 +304,7 @@ export class Checker extends DurableObject<Env> {
       await this.notify(healthAlert('Stock results look normal again', 'Apple is returning stock data again.'));
       health.staleAlerted = false;
     } else if (!seen && health.canaryMisses >= CANARY_MISSES_BEFORE_ALERT && !health.staleAlerted) {
-      const body = `Apple is answering, but even iPhone 17 shows no stock near ${config.postcode}, so "nothing in stock" may be wrong.`;
+      const body = `Apple is answering, but even iPhone 17 shows no stock around ${area.name}, so "nothing in stock" may be wrong.`;
       health.staleAlerted = (await this.notify(healthAlert('Stock results may be stale', body))).delivered;
     }
   }
@@ -233,7 +345,9 @@ export class Checker extends DurableObject<Env> {
   }
 
   private async config(): Promise<Config> {
-    return { ...DEFAULT_CONFIG, ...(await this.ctx.storage.get<Partial<Config>>('config')) };
+    // Before areas, the config had a single postcode. It was the London default, so it's dropped.
+    const { postcode: _, ...stored } = (await this.ctx.storage.get<Partial<Config> & { postcode?: string }>('config')) ?? {};
+    return { ...DEFAULT_CONFIG, ...stored };
   }
 
   private async health(): Promise<Health> {
@@ -245,8 +359,15 @@ export class Checker extends DurableObject<Env> {
     return (await this.ctx.storage.get<Pace>('pace')) ?? { intervalSeconds: config.intervalSeconds, changedAt: 0 };
   }
 
-  private async results() {
-    return (await this.ctx.storage.get<Results>('results')) ?? {};
+  // Answers to the given queries only, dropping any left over from an earlier config.
+  private async results(queries: readonly Query[]): Promise<Results> {
+    const stored = (await this.ctx.storage.get<Results>('results')) ?? {};
+    return Object.fromEntries(queries.flatMap((q) => (stored[q.key] ? [[q.key, stored[q.key]]] : [])));
+  }
+
+  // Names and places of the watched stores, as Apple last described them.
+  private async stores() {
+    return (await this.ctx.storage.get<Record<string, Store>>('stores')) ?? {};
   }
 
   private async devices() {
