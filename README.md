@@ -1,6 +1,6 @@
 # Muo Duo
 
-Push notifications to my iPhone the moment an iPhone Duo is available to collect today at any Apple Store in London, the south of England or Manchester, and an alarm if it's first thing in the morning.
+Push notifications to my iPhone the moment an iPhone Duo is available to collect today at any Apple Store in London, the south of England or Manchester, and an alarm if it's in the hours I've chosen, first thing in the morning to start with.
 
 - **`worker/`**: a Cloudflare Worker with one Durable Object that polls two of Apple's pickup endpoints for 20 stores in three areas, one request a second, and sends APNs pushes.
 - **`ios/`**: a SwiftUI app with a Liquid Glass design. It shows the checker working live, when an iPhone Duo was last in stock and where, a map of the stores being watched, and which models alert you. Tapping an alert, or Buy in the app, opens the model in the Apple Store app.
@@ -12,7 +12,7 @@ Durable Object alarm (about once a second: 3 areas × 4 colour/capacity queries,
   ├─ GET apple.com/uk/shop/pickup-message-recommendations?location=<area>   (one query per alarm, taking turns)
   │    └─ new part@store to collect today?
   │         └─ yes ─▶ GET apple.com/uk/shop/retail/pickup-message (every store in that area, up to 2s)
-  │                     └─▶ APNs (time-sensitive, plus an alarm 06:00–08:00) ─▶ iPhone
+  │                     └─▶ APNs (time-sensitive, plus an alarm in the alarm hours) ─▶ iPhone
   └─ once a minute, instead: GET apple.com/uk/shop/retail/pickup-message for the next area   (a sweep)
 ```
 
@@ -21,7 +21,7 @@ Durable Object alarm (about once a second: 3 areas × 4 colour/capacity queries,
   - `retail/pickup-message` answers for every watched part at all 12 stores nearest the search in one go, so it finds every store with stock. It's slower, and Apple is warier of it, so it's asked less often: a sweep.
 - **Sweeps.** Once a minute an alarm sweeps one area instead of asking its quick query, taking turns, so each area is swept every 3 minutes. And when a quick check finds new stock, its area is swept before the push goes out, so the alert names every store that has it. That sweep gets 2 seconds; if Apple's slower, the alert goes without it. Stock is the quick checks' latest answers plus each area's last sweep. A sweep stops counting after 5 minutes, and when a quick check finds none of a capacity's other colours anywhere near an area, what the area's last sweep found of them goes straight away. Neither source can cancel stock the other has found, so a disagreement errs towards alerting.
 - **Today only.** Only stock Apple quotes as "Available Today" is alerted on or logged. Once the stores close, Apple quotes everything for tomorrow, so in the evening nothing counts until the next day.
-- **Alarm hours.** Restocks tend to land first thing. Stock found between 06:00 and 08:00 UK time (`alarm` in the config) also rings an alarm: the push goes through the app's notification service extension, which schedules an [AlarmKit](https://developer.apple.com/documentation/alarmkit) alarm a second later, sounding through silent mode and Focus like the Clock app's. Only one rings at a time. If it can't ring, the notification says why. Apple doesn't document scheduling alarms from a notification service extension, so test it from Settings.
+- **Alarm hours.** Restocks tend to land first thing, so the hours start as 06:00 to 08:00 UK time, and Settings can change them (`alarm` in the config). Stock found in those hours also rings an alarm: the push goes through the app's notification service extension, which schedules an [AlarmKit](https://developer.apple.com/documentation/alarmkit) alarm a second later, sounding through silent mode and Focus like the Clock app's. Only one rings at a time. If it can't ring, the notification says why. Apple doesn't document scheduling alarms from a notification service extension, so test it from Settings.
 - **Areas.** One search only reaches 12 stores, so the checker runs three:
 
   | Area | Search | Stores |
@@ -53,7 +53,7 @@ The Worker does all the checking; the app only watches it, polling `/status` eve
 - **Liquid Glass.** Cards, colour and capacity pickers, the ticker, the toolbar and the full-screen store map's chips and store panel are all glass over a slowly drifting mesh-gradient sky.
 - **Status badge.** The badge in the top left says LIVE only while the app can reach the Worker and the Worker is checking Apple. Otherwise it inverts into a solid pill saying what's wrong: OFFLINE (the app can't reach the Worker), PAUSED, FAILING (Apple isn't answering), STOPPED (the Worker's next check is over 2 minutes overdue) or STALE. A slow-down still counts as live, since checks are getting through.
 - **Warnings.** If the checker can't reach Apple or the results look stale, a banner says so at the top, since alerts may not arrive. A slow-down after Apple pushes back is less urgent, so it sits at the bottom.
-- **Settings** is its own page, pushed from the gear, in the same glass over the same sky. Alerts come first: every size of both colours, showing which ones you'll hear about. Turning one on is a tap, but turning one off asks first, so a stray tap can't quietly stop alerts for a size. Pausing checks asks first too. Then the alarm hours: whether stock first thing rings an alarm, whether alarms are allowed, and a test alarm sent 10 seconds later, so there's time to lock the phone. Below that are the current pace and last good check, notification registration and a test push, and each area, which opens to show its stores.
+- **Settings** is its own page, pushed from the gear, in the same glass over the same sky. Alerts come first: every size of both colours, showing which ones you'll hear about. Turning one on is a tap, but turning one off asks first, so a stray tap can't quietly stop alerts for a size. Pausing checks asks first too. Then the alarm: whether stock rings one and in which hours (tapping the hours opens wheels to choose from and to, in whole UK hours, saved once they stop turning), whether alarms are allowed, and a test alarm sent 10 seconds later, so there's time to lock the phone. Below that are the current pace and last good check, notification registration and a test push, and each area, which opens to show its stores.
 
 ## Setup
 

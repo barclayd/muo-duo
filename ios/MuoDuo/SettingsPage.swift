@@ -130,13 +130,18 @@ private struct AlertChip: View {
 
 // MARK: - Alarm
 
-/// Restocks tend to land first thing, so stock found in the alarm hours rings like an alarm clock, through
-/// silent mode and Focus. The test is sent after a delay, so the phone can be locked to see it as it would be.
+/// Stock found in the alarm hours rings like an alarm clock, through silent mode and Focus. Tapping the hours
+/// opens wheels to choose them, saved once they've stopped turning. The test is sent after a delay, so the
+/// phone can be locked to see it as it would be.
 private struct AlarmCard: View {
     let model: StatusModel
     let status: Status
 
     @State private var permission = AlarmManager.shared.authorizationState
+    @State private var choosingHours = false
+    /// The hours on the wheels, from when they were opened. Kept after they close, so a change made just
+    /// before closing still saves.
+    @State private var draft: Status.Alarm?
     @State private var testResult: String?
     @State private var sendingTest = false
 
@@ -147,14 +152,18 @@ private struct AlarmCard: View {
         VStack(alignment: .leading, spacing: 8) {
             CardHeader(title: "Alarm", symbol: "alarm", trailing: alarm.enabled ? alarm.hours : "Off")
             VStack(spacing: 0) {
-                Toggle("Ring for stock first thing", isOn: Binding(
+                Toggle("Ring for stock", isOn: Binding(
                     get: { alarm.enabled },
                     set: { on in Task { await model.setAlarm(on) } }
                 ))
                 .disabled(model.isWorking)
                 .padding(.vertical, 7)
                 Divider()
-                Row("Hours", value: "\(alarm.hours) UK")
+                hoursRow(alarm)
+                if choosingHours {
+                    hourWheels(alarm)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
                 Divider()
                 Row("Alarms on this iPhone") { permissionStatus }
             }
@@ -215,6 +224,56 @@ private struct AlarmCard: View {
         .task {
             for await state in AlarmManager.shared.authorizationUpdates { permission = state }
         }
+        // Each turn of a wheel restarts this, so only where they stop is saved.
+        .task(id: draft) {
+            guard let draft, draft.from != status.config.alarm.from || draft.to != status.config.alarm.to else { return }
+            do { try await Task.sleep(for: .seconds(0.6)) } catch { return }
+            await model.setAlarmHours(from: draft.from, to: draft.to)
+        }
+    }
+
+    private func hoursRow(_ alarm: Status.Alarm) -> some View {
+        let shown = choosingHours ? draft ?? alarm : alarm
+        return Button {
+            if !choosingHours { draft = alarm }
+            withAnimation(.smooth) { choosingHours.toggle() }
+        } label: {
+            Row("Hours") {
+                Text(shown.allDay ? shown.hours : "\(shown.hours) UK")
+                    .foregroundStyle(choosingHours ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .contentTransition(.numericText())
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(choosingHours ? "Hides the hours" : "Shows the hours to choose from")
+    }
+
+    /// From and to, in whole UK hours. Moving one past the other carries the other along, keeping the length.
+    private func hourWheels(_ alarm: Status.Alarm) -> some View {
+        let hours = draft ?? alarm
+        let length = hours.to - hours.from
+        return HStack(spacing: 0) {
+            HourWheel(title: "From", hours: 0...23, selection: Binding(
+                get: { hours.from },
+                set: { from in
+                    var next = hours
+                    next.from = from
+                    if next.to <= from { next.to = min(24, from + length) }
+                    draft = next
+                }
+            ))
+            HourWheel(title: "To", hours: 1...24, selection: Binding(
+                get: { hours.to },
+                set: { to in
+                    var next = hours
+                    next.to = to
+                    if next.from >= to { next.from = max(0, to - length) }
+                    draft = next
+                }
+            ))
+        }
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder private var permissionStatus: some View {
@@ -226,6 +285,30 @@ private struct AlarmCard: View {
         default:
             Text("Not asked yet")
         }
+    }
+}
+
+private struct HourWheel: View {
+    let title: String
+    let hours: ClosedRange<Int>
+    @Binding var selection: Int
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Picker(title, selection: $selection) {
+                ForEach(hours, id: \.self) { Text(Status.Alarm.clock($0)).monospacedDigit().tag($0) }
+            }
+            .pickerStyle(.wheel)
+            .labelsHidden()
+            .frame(height: 130)
+        }
+        .frame(maxWidth: .infinity)
+        // Side by side, each wheel would otherwise take touches meant for the other.
+        .clipped()
+        .contentShape(.rect)
     }
 }
 

@@ -13,10 +13,14 @@ struct Status: Decodable {
     /// Stock found between these UK hours also rings an alarm. From is included, to isn't.
     struct Alarm: Codable, Equatable {
         var enabled: Bool
-        let from: Int
-        let to: Int
+        var from: Int
+        var to: Int
 
-        var hours: String { String(format: "%02d:00–%02d:00", from, to) }
+        var allDay: Bool { from == 0 && to == 24 }
+        var hours: String { allDay ? "All day" : "\(Self.clock(from))–\(Self.clock(to))" }
+
+        /// 24, the end of the day, reads as 00:00.
+        static func clock(_ hour: Int) -> String { String(format: "%02d:00", hour % 24) }
     }
 
     struct Health: Decodable {
