@@ -59,23 +59,34 @@ final class StatusModel {
     }
 
     func setWatching(_ part: String, _ watching: Bool) async {
-        guard var parts = status?.config.parts else { return }
+        guard var parts = status?.device?.parts else { return }
         parts.removeAll { $0 == part }
         if watching { parts.append(part) }
-        await perform { try await $0.updateConfig(ConfigPatch(parts: parts)) }
+        await perform { try await $0.updateDevice(DevicePatch(parts: parts)) }
+    }
+
+    func setArea(_ search: String, _ on: Bool) async {
+        guard var areas = status?.device?.areas else { return }
+        areas.removeAll { $0 == search }
+        if on { areas.append(search) }
+        await perform { try await $0.updateDevice(DevicePatch(areas: areas)) }
+    }
+
+    func setMuted(_ muted: Bool) async {
+        await perform { try await $0.updateDevice(DevicePatch(muted: muted)) }
     }
 
     func setAlarm(_ enabled: Bool) async {
-        guard var alarm = status?.config.alarm else { return }
+        guard var alarm = status?.device?.alarm else { return }
         alarm.enabled = enabled
-        await perform { try await $0.updateConfig(ConfigPatch(alarm: alarm)) }
+        await perform { try await $0.updateDevice(DevicePatch(alarm: alarm)) }
     }
 
     func setAlarmHours(from: Int, to: Int) async {
-        guard var alarm = status?.config.alarm else { return }
+        guard var alarm = status?.device?.alarm else { return }
         alarm.from = from
         alarm.to = to
-        await perform { try await $0.updateConfig(ConfigPatch(alarm: alarm)) }
+        await perform { try await $0.updateDevice(DevicePatch(alarm: alarm)) }
     }
 
     func register(deviceToken: Data) async {

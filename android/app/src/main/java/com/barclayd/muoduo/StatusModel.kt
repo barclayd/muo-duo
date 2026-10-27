@@ -10,9 +10,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.content.edit
 import java.io.File
 import java.time.Duration
 import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,7 +56,7 @@ class StatusModel(context: Context, private val http: OkHttpClient, private val 
     /** Apple's product shots, by URL. */
     val images = mutableStateMapOf<String, ImageBitmap>()
 
-    private val api = ApiClient(http)
+    private val api = ApiClient(http, installID(context))
     private val cacheDir = context.cacheDir
     private var newestCheck: Instant? = null
     /** Bumped by every change the user makes, so a poll that started before it can't undo it. */
@@ -86,18 +88,25 @@ class StatusModel(context: Context, private val http: OkHttpClient, private val 
     suspend fun setPaused(paused: Boolean) = perform { it.updateConfig(ConfigPatch(paused = paused)) }
 
     suspend fun setWatching(part: String, watching: Boolean) {
-        val parts = status?.config?.parts?.filter { it != part } ?: return
-        perform { it.updateConfig(ConfigPatch(parts = if (watching) parts + part else parts)) }
+        val parts = status?.device?.parts?.filter { it != part } ?: return
+        perform { it.updateDevice(DevicePatch(parts = if (watching) parts + part else parts)) }
     }
 
+    suspend fun setArea(search: String, on: Boolean) {
+        val areas = status?.device?.areas?.filter { it != search } ?: return
+        perform { it.updateDevice(DevicePatch(areas = if (on) areas + search else areas)) }
+    }
+
+    suspend fun setMuted(muted: Boolean) = perform { it.updateDevice(DevicePatch(muted = muted)) }
+
     suspend fun setAlarm(enabled: Boolean) {
-        val alarm = status?.config?.alarm ?: return
-        perform { it.updateConfig(ConfigPatch(alarm = alarm.copy(enabled = enabled))) }
+        val alarm = status?.device?.alarm ?: return
+        perform { it.updateDevice(DevicePatch(alarm = alarm.copy(enabled = enabled))) }
     }
 
     suspend fun setAlarmHours(from: Int, to: Int) {
-        val alarm = status?.config?.alarm ?: return
-        perform { it.updateConfig(ConfigPatch(alarm = alarm.copy(from = from, to = to))) }
+        val alarm = status?.device?.alarm ?: return
+        perform { it.updateDevice(DevicePatch(alarm = alarm.copy(from = from, to = to))) }
     }
 
     suspend fun register(token: String) {
@@ -220,5 +229,12 @@ class StatusModel(context: Context, private val http: OkHttpClient, private val 
 
     private companion object {
         const val LIVE_CHECK_COUNT = 30
+
+        /** Made up the first time the app runs and kept, so the Worker can tell this phone from others. */
+        fun installID(context: Context): String {
+            val prefs = context.getSharedPreferences("muoduo", Context.MODE_PRIVATE)
+            prefs.getString("deviceID", null)?.let { return it }
+            return UUID.randomUUID().toString().also { id -> prefs.edit { putString("deviceID", id) } }
+        }
     }
 }

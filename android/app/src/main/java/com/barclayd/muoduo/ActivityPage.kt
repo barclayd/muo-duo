@@ -56,7 +56,7 @@ private fun Summary(model: StatusModel, status: Status, now: Instant) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             LiveDot(status.state.color, model.pulses, 9.dp)
             Text(headline(status), Modifier.weight(1f), style = Type.headline)
-            if (status.config.paused) {
+            if (status.config.paused && status.isOwner) {
                 ProminentButton(onClick = { model.launch { setPaused(false) } }, enabled = !model.isWorking) { Text("Resume") }
             }
         }

@@ -4,6 +4,15 @@ enum AppConfig {
     static let apiBaseURL = URL(string: info("MuoDuoAPIBaseURL"))
     static let apiToken = info("MuoDuoAPIToken")
 
+    /// This install's own id, sent with every request, so the Worker can keep this iPhone's settings apart.
+    static let deviceID: String = {
+        let key = "deviceID"
+        if let id = UserDefaults.standard.string(forKey: key) { return id }
+        let id = UUID().uuidString.lowercased()
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }()
+
     /// Which APNs host the Worker must use for this build's device token.
     /// Builds run from Xcode carry a development profile and use the sandbox; App Store and
     /// TestFlight builds have no embedded profile and use production.

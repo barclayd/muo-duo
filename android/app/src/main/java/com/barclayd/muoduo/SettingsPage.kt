@@ -96,17 +96,23 @@ import kotlinx.coroutines.flow.filter
 
 /**
  * Pushed from the home screen, in the same glass over the same sky. Alerts come first: they're what
- * matters most, and turning one off is the easiest way to miss stock.
+ * matters most, and turning one off is the easiest way to miss stock. Alerts, the alarm, areas and mute
+ * are this phone's own; pausing is for everyone, so only the owner's key can do it.
  */
 @Composable
 fun SettingsPage(model: StatusModel, finish: Finish, back: () -> Unit) {
     Page(finish, title = "Settings", leading = { BarButton(Icons.Rounded.ChevronLeft, "Back", back) }) {
         val status = model.status ?: return@Page
-        AlertsCard(model, status)
-        AlarmCard(model, status)
+        val device = status.device
+        if (device != null) {
+            AlertsCard(model, status, device)
+            AlarmCard(model, device)
+        } else {
+            UnregisteredCard(model)
+        }
         CheckingCard(model, status)
         NotificationsCard(model, status)
-        AreasCard(status)
+        AreasCard(model, status, finish)
         Text(
             "Product images are Apple's, loaded from apple.com.",
             Modifier.padding(top = 4.dp).fillMaxWidth(),
@@ -121,8 +127,19 @@ fun SettingsPage(model: StatusModel, finish: Finish, back: () -> Unit) {
 
 /** Every size of both colours. Turning one on is a tap; turning one off asks first. */
 @Composable
-private fun AlertsCard(model: StatusModel, status: Status) {
-    val watching = status.models.count { it.part in status.config.parts }
+private fun AlertsCard(model: StatusModel, status: Status, device: Status.Device) {
+    val watching = status.models.count { it.part in device.parts }
+    val warning = when {
+        device.muted -> "This phone is muted, so it won't hear about any stock."
+        device.parts.isEmpty() -> "No alerts are on, so you won't hear about any stock."
+        device.areas.isEmpty() -> "No areas are on, so you won't hear about any stock."
+        else -> null
+    }
+    val areas = when (device.areas.size) {
+        1 -> "your area"
+        status.areas.size -> "all ${status.areas.size} areas"
+        else -> "your ${device.areas.size} areas"
+    }
     Column(Modifier.animateContentSize(smooth()).card(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         CardHeader("Alerts", Icons.Outlined.NotificationsActive, "$watching on")
         for (finish in Finish.entries) {
@@ -133,19 +150,19 @@ private fun AlertsCard(model: StatusModel, status: Status) {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for (phone in status.models(finish)) {
-                        key(phone.part) { AlertChip(model, status, phone, finish, enabled = !model.isWorking) }
+                        key(phone.part) { AlertChip(model, status, device, phone, finish, enabled = !model.isWorking) }
                     }
                 }
             }
         }
-        if (watching == 0) {
+        if (warning != null) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Symbol(Icons.Filled.NotificationsOff, Type.caption, tint = ink.orange)
-                Text("No alerts are on, so you won't hear about any stock.", color = ink.orange, style = Type.caption.weight(FontWeight.Medium))
+                Text(warning, color = ink.orange, style = Type.caption.weight(FontWeight.Medium))
             }
         } else {
             Text(
-                "Every size you watch is checked in all ${status.areas.size} areas, every ${status.pace.intervalSeconds}s.",
+                "Every size you watch is checked in $areas, every ${status.pace.intervalSeconds}s.",
                 color = ink.secondary,
                 style = Type.caption,
             )
@@ -154,8 +171,8 @@ private fun AlertsCard(model: StatusModel, status: Status) {
 }
 
 @Composable
-private fun RowScope.AlertChip(model: StatusModel, status: Status, phone: Status.Model, finish: Finish, enabled: Boolean) {
-    val watching = phone.part in status.config.parts
+private fun RowScope.AlertChip(model: StatusModel, status: Status, device: Status.Device, phone: Status.Model, finish: Finish, enabled: Boolean) {
+    val watching = phone.part in device.parts
     val inStock = status.sightings.any { it.part == phone.part }
     var confirmingOff by remember { mutableStateOf(false) }
     val interactions = remember { MutableInteractionSource() }
@@ -204,7 +221,7 @@ private fun RowScope.AlertChip(model: StatusModel, status: Status, phone: Status
     if (confirmingOff) {
         Confirm(
             title = "Turn off alerts for ${phone.name}?",
-            message = "You won't hear when it's in stock at any of the ${status.storeCount} stores.",
+            message = "This phone won't hear when it's in stock at any of its ${status.storeCount(device.areas)} stores.",
             action = "Turn Off Alerts",
             dismiss = { confirmingOff = false },
         ) { model.launch { setWatching(phone.part, false) } }
@@ -224,9 +241,9 @@ private enum class AlarmPermission { NotAsked, Denied, Allowed }
  * delay, so the phone can be locked to see it as it would be.
  */
 @Composable
-private fun AlarmCard(model: StatusModel, status: Status) {
+private fun AlarmCard(model: StatusModel, device: Status.Device) {
     val context = LocalContext.current
-    val alarm = status.config.alarm
+    val alarm = device.alarm
     val fullScreen = rememberOnResume(Permissions::fullScreen)
     val permission = when (model.notificationsAllowed) {
         null -> AlarmPermission.NotAsked
@@ -247,7 +264,7 @@ private fun AlarmCard(model: StatusModel, status: Status) {
     // Each turn of a wheel restarts this, so only where they stop is saved.
     LaunchedEffect(draft) {
         val hours = draft ?: return@LaunchedEffect
-        val saved = model.status?.config?.alarm ?: return@LaunchedEffect
+        val saved = model.status?.device?.alarm ?: return@LaunchedEffect
         if (hours.from == saved.from && hours.to == saved.to) return@LaunchedEffect
         delay(600)
         model.launch { setAlarmHours(hours.from, hours.to) }
@@ -455,13 +472,17 @@ private fun CheckingCard(model: StatusModel, status: Status) {
     Column(Modifier.animateContentSize(smooth()).card(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         CardHeader("Checking", Icons.Outlined.Sensors)
         Column {
-            Toggle(
-                "Check Apple for stock",
-                !status.config.paused,
-                { checking -> if (checking) model.launch { setPaused(false) } else confirmingPause = true },
-                Modifier.padding(vertical = 7.dp),
-                enabled = !model.isWorking,
-            )
+            if (status.isOwner) {
+                Toggle(
+                    "Check Apple for stock",
+                    !status.config.paused,
+                    { checking -> if (checking) model.launch { setPaused(false) } else confirmingPause = true },
+                    Modifier.padding(vertical = 7.dp),
+                    enabled = !model.isWorking,
+                )
+            } else {
+                SettingRow("Checking Apple for stock") { Text(if (status.config.paused) "Paused" else "On") }
+            }
             Separator()
             SettingRow("Each size, each area") { Text("every ${status.pace.intervalSeconds}s") }
             status.health.lastSuccessAt?.let { date ->
@@ -482,7 +503,7 @@ private fun CheckingCard(model: StatusModel, status: Status) {
     if (confirmingPause) {
         Confirm(
             title = "Pause checking?",
-            message = "No alerts will arrive until you turn it back on.",
+            message = "No phone will get alerts until you turn it back on.",
             action = "Pause",
             dismiss = { confirmingPause = false },
         ) { model.launch { setPaused(true) } }
@@ -496,6 +517,7 @@ private fun NotificationsCard(model: StatusModel, status: Status) {
     val context = LocalContext.current
     var testResult by remember { mutableStateOf<String?>(null) }
     var sendingTest by remember { mutableStateOf(false) }
+    var confirmingMute by remember { mutableStateOf(false) }
     Column(Modifier.animateContentSize(smooth()).card(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         CardHeader("Notifications", Icons.Outlined.PhonelinkRing)
         Column {
@@ -505,6 +527,16 @@ private fun NotificationsCard(model: StatusModel, status: Status) {
                     StatusModel.Registration.Registered -> TrailingIcon("Registered", Icons.Filled.CheckCircle, ink.green)
                     is StatusModel.Registration.Failed -> TrailingIcon("Failed: ${registration.message}", Icons.Filled.Warning, ink.orange)
                 }
+            }
+            status.device?.let { device ->
+                Separator()
+                Toggle(
+                    "Mute this phone",
+                    device.muted,
+                    { muted -> if (muted) confirmingMute = true else model.launch { setMuted(false) } },
+                    Modifier.padding(vertical = 7.dp),
+                    enabled = !model.isWorking,
+                )
             }
             Separator()
             SettingRow("Devices registered") { Text("${status.devices}") }
@@ -537,13 +569,59 @@ private fun NotificationsCard(model: StatusModel, status: Status) {
         }
         testResult?.let { Text(it, color = ink.secondary, style = Type.caption) }
     }
+
+    if (confirmingMute) {
+        Confirm(
+            title = "Mute this phone?",
+            message = "It won't get stock alerts or warnings until you turn this off. Other phones still will.",
+            action = "Mute",
+            dismiss = { confirmingMute = false },
+        ) { model.launch { setMuted(true) } }
+    }
+}
+
+// Unregistered
+
+/** Alerts and the alarm are this phone's own, so they wait until it has registered. */
+@Composable
+private fun UnregisteredCard(model: StatusModel) {
+    Column(Modifier.animateContentSize(smooth()).card(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        CardHeader("Alerts", Icons.Outlined.NotificationsActive)
+        when (val registration = model.registration) {
+            StatusModel.Registration.Pending, StatusModel.Registration.Registered -> Row(
+                Modifier.padding(vertical = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Spinner()
+                Text("Registering this phone…")
+            }
+            is StatusModel.Registration.Failed -> Row(
+                Modifier.padding(vertical = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Symbol(Icons.Filled.Warning, Type.subheadline, tint = ink.orange)
+                Text("Couldn't register: ${registration.message}", color = ink.orange, style = Type.subheadline.weight(FontWeight.Medium))
+            }
+        }
+        Text(
+            "Each phone chooses its own models, areas and alarm hours once it's registered for notifications.",
+            color = ink.secondary,
+            style = Type.caption,
+        )
+    }
 }
 
 // Areas
 
-/** Each search the Worker runs, opening up to the stores it watches. */
+/**
+ * Each search the Worker runs, opening up to the stores it watches. The tick is whether this phone hears
+ * about stock there.
+ */
 @Composable
-private fun AreasCard(status: Status) {
+private fun AreasCard(model: StatusModel, status: Status, finish: Finish) {
+    val device = status.device
     var expanded by remember { mutableStateOf(emptySet<String>()) }
     HapticOnChange(expanded) { _, _ -> HapticFeedbackType.SegmentTick }
     Column(Modifier.card(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -553,7 +631,10 @@ private fun AreasCard(status: Status) {
                 key(area.id) {
                     if (index > 0) Separator()
                     val open = area.id in expanded
-                    AreaRow(area, open) { expanded = if (open) expanded - area.id else expanded + area.id }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (device != null) AreaTick(model, area, area.search in device.areas, finish)
+                        AreaRow(area, open, Modifier.weight(1f)) { expanded = if (open) expanded - area.id else expanded + area.id }
+                    }
                     AnimatedVisibility(
                         open,
                         enter = fadeIn(smooth()) + expandVertically(smooth(), expandFrom = Alignment.Top),
@@ -566,16 +647,52 @@ private fun AreasCard(status: Status) {
                 }
             }
         }
-        Text("Each area is one search on Apple. Change them with PUT /config on the Worker.", color = ink.secondary, style = Type.caption)
+        val ticks = if (device == null) "" else "Tick the areas this phone hears about. "
+        val changing = if (status.isOwner) " Change them with PUT /config on the Worker." else ""
+        Text("${ticks}Each area is one search on Apple.$changing", color = ink.secondary, style = Type.caption)
+    }
+}
+
+/** Turning an area on is a tap; turning one off asks first, as for a model. */
+@Composable
+private fun AreaTick(model: StatusModel, area: Status.Area, on: Boolean, finish: Finish) {
+    var confirmingOff by remember { mutableStateOf(false) }
+    HapticOnChange(on) { _, now -> if (now) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff }
+    AnimatedContent(
+        on,
+        Modifier
+            .plainButton(enabled = !model.isWorking) {
+                if (on) confirmingOff = true else model.launch { setArea(area.search, true) }
+            }
+            .alpha(if (model.isWorking) 0.5f else 1f)
+            .semantics { contentDescription = "${area.name}, ${if (on) "alerts on" else "alerts off"}" },
+        transitionSpec = {
+            (fadeIn(snappy()) + scaleIn(snappy(), initialScale = 0.5f)) togetherWith
+                (fadeOut(snappy()) + scaleOut(snappy(), targetScale = 0.5f))
+        },
+        contentAlignment = Alignment.Center,
+        label = "area tick",
+    ) { ticked ->
+        if (ticked) Symbol(Icons.Filled.CheckCircle, Type.title3, tint = finish.accent)
+        else Symbol(Icons.Outlined.RadioButtonUnchecked, Type.title3, tint = ink.secondary)
+    }
+
+    if (confirmingOff) {
+        Confirm(
+            title = "Turn off alerts in ${area.name}?",
+            message = "This phone won't hear about stock at any of its ${area.stores.size} stores.",
+            action = "Turn Off Alerts",
+            dismiss = { confirmingOff = false },
+        ) { model.launch { setArea(area.search, false) } }
     }
 }
 
 @Composable
-private fun AreaRow(area: Status.Area, open: Boolean, toggle: () -> Unit) {
+private fun AreaRow(area: Status.Area, open: Boolean, modifier: Modifier = Modifier, toggle: () -> Unit) {
     val uncovered = area.stores.count { !it.covered }
     val turn by animateFloatAsState(if (open) 90f else 0f, smooth(), label = "chevron")
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .plainButton(onClick = toggle)
             .padding(vertical = 10.dp)

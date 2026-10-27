@@ -183,7 +183,7 @@ The Worker does all the checking; the app only watches it, polling `/status` eve
 - **Liquid Glass.** Cards, colour and capacity pickers, the ticker, the toolbar and the full-screen store map's chips and store panel are all glass over a slowly drifting mesh-gradient sky.
 - **Status badge.** The badge in the top left says LIVE only while the app can reach the Worker and the Worker is checking Apple. Otherwise it inverts into a solid pill saying what's wrong: OFFLINE (the app can't reach the Worker), PAUSED, FAILING (Apple isn't answering), STOPPED (the Worker's next check is over 2 minutes overdue) or STALE. A slow-down still counts as live, since checks are getting through.
 - **Warnings.** If the checker can't reach Apple or the results look stale, a banner says so at the top, since alerts may not arrive. A slow-down after Apple pushes back is less urgent, so it sits at the bottom.
-- **Settings** is its own page, pushed from the gear, in the same glass over the same sky. Alerts come first: every size of both colours, showing which ones you'll hear about. Turning one on is a tap, but turning one off asks first, so a stray tap can't quietly stop alerts for a size. Pausing checks asks first too. Then the alarm: whether stock rings one and in which hours (tapping the hours opens wheels to choose from and to, in whole UK hours, saved once they stop turning), whether alarms are allowed, and a test alarm sent 10 seconds later, so there's time to lock the phone. Below that are the current pace and last good check, notification registration and a test push, and each area, which opens to show its stores.
+- **Settings** is its own page, pushed from the gear, in the same glass over the same sky. Everything on it is this phone's own, apart from pausing, which stops checks for every phone and needs the owner's key. Alerts come first: every size of both colours, showing which ones this phone will hear about. Turning one on is a tap, but turning one off asks first, so a stray tap can't quietly stop alerts for a size. Pausing checks, muting the phone and turning off an area ask first too. Then the alarm: whether stock rings one and in which hours (tapping the hours opens wheels to choose from and to, in whole UK hours, saved once they stop turning), whether alarms are allowed, and a test alarm sent 10 seconds later, so there's time to lock the phone. Below that are the current pace and last good check, notification registration, a switch to mute this phone and a test push, and each area, ticked if this phone hears about it, which opens to show its stores. Until the phone has registered, its alerts and alarm wait.
 
 </details>
 
@@ -235,6 +235,8 @@ open MuoDuo.xcodeproj
 
 Run it on your iPhone, allow notifications, then use **Settings → Send test notification**. If iOS asks, allow **Time Sensitive** notifications so alerts break through Focus modes, and allow alarms. Then use **Settings → Test Alarm** and lock the phone.
 
+For a friend's iPhone, put the `FRIEND_API_TOKEN` in place of yours.
+
 ### 5. 🤖 Android app
 
 You'll need JDK 21 and the Android SDK. [Android Studio](https://developer.android.com/studio) brings both, or without it:
@@ -257,6 +259,8 @@ adb install app/build/outputs/apk/release/app-release.apk
 The Firebase values are in `google-services.json`: `project_id`, `mobilesdk_app_id`, `current_key` (the API key) and `project_number` (the sender ID). The app reads them from `secrets.properties` rather than the file, so they stay out of the repo.
 
 The release build is signed with your machine's debug key, which is enough to install it yourself. Allow notifications when it asks, then use **Settings → Send test notification**.
+
+For a friend's phone, put the `FRIEND_API_TOKEN` in `MUODUO_API_TOKEN` instead of yours. Their phone chooses its own settings and can't pause checking. The key is inside the APK, so send it to them directly rather than posting it anywhere.
 
 Android has no AlarmKit, so the alarm is a notification on its own channel that rings on the alarm volume until it's stopped, and takes over the lock screen as the Clock app's alarm does. Do Not Disturb lets it through, unless you've turned off alarms there. Android 14 and later can turn off an app's full-screen alerts; if it has, **Settings** in the app says so and opens the switch. Plain stock alerts don't break through Do Not Disturb on their own: to let them, add Muo Duo to its exceptions.
 

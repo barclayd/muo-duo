@@ -35,6 +35,12 @@ struct APIClient {
         try await send("POST", "devices", body: DeviceRegistration(token: token, environment: environment))
     }
 
+    /// This iPhone's own settings.
+    func updateDevice(_ patch: DevicePatch) async throws -> Status {
+        try await send("PUT", "device", body: patch)
+    }
+
+    /// Settings shared by every phone. Only the owner's key can change them.
     func updateConfig(_ patch: ConfigPatch) async throws -> Status {
         try await send("PUT", "config", body: patch)
     }
@@ -55,6 +61,7 @@ struct APIClient {
         request.httpMethod = method
         request.timeoutInterval = timeout
         request.setValue("Bearer \(AppConfig.apiToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(AppConfig.deviceID, forHTTPHeaderField: "x-device-id")
         if let body {
             request.httpBody = try JSONEncoder().encode(body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
