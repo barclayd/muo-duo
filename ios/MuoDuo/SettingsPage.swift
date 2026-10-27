@@ -3,7 +3,8 @@ import SwiftUI
 import UIKit
 
 /// Pushed from the home screen, in the same glass over the same sky. Alerts come first: they're what
-/// matters most, and turning one off is the easiest way to miss stock.
+/// matters most, and turning one off is the easiest way to miss stock. Alerts, the alarm, areas and mute
+/// are this iPhone's own; pausing is for everyone, so only the owner's key can do it.
 struct SettingsPage: View {
     let model: StatusModel
     let finish: Finish
@@ -12,11 +13,15 @@ struct SettingsPage: View {
         ScrollView {
             if let status = model.status {
                 VStack(spacing: 16) {
-                    AlertsCard(model: model, status: status)
-                    AlarmCard(model: model, status: status)
+                    if let device = status.device {
+                        AlertsCard(model: model, status: status, device: device)
+                        AlarmCard(model: model, status: status, device: device)
+                    } else {
+                        UnregisteredCard(model: model)
+                    }
                     CheckingCard(model: model, status: status)
                     NotificationsCard(model: model, status: status)
-                    AreasCard(status: status)
+                    AreasCard(model: model, status: status)
                     Text("Product images are Apple's, loaded from apple.com.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -24,9 +29,8 @@ struct SettingsPage: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
-                .animation(.smooth, value: status.config.parts)
+                .animation(.smooth, value: status.device)
                 .animation(.smooth, value: status.config.paused)
-                .animation(.smooth, value: status.config.alarm)
             }
         }
         .scrollIndicators(.hidden)
@@ -42,9 +46,10 @@ struct SettingsPage: View {
 private struct AlertsCard: View {
     let model: StatusModel
     let status: Status
+    let device: Status.Device
 
     var body: some View {
-        let watching = status.models.filter { status.config.parts.contains($0.part) }.count
+        let watching = status.models.filter { device.parts.contains($0.part) }.count
         VStack(alignment: .leading, spacing: 18) {
             CardHeader(title: "Alerts", symbol: "bell.badge", trailing: "\(watching) on")
             ForEach(Finish.allCases) { finish in
@@ -59,37 +64,51 @@ private struct AlertsCard: View {
                     GlassEffectContainer(spacing: 8) {
                         HStack(spacing: 8) {
                             ForEach(status.models(in: finish)) { phone in
-                                AlertChip(model: model, status: status, phone: phone, finish: finish)
+                                AlertChip(model: model, status: status, device: device, phone: phone, finish: finish)
                             }
                         }
                     }
                 }
             }
             .disabled(model.isWorking)
-            if watching == 0 {
-                Label("No alerts are on, so you won't hear about any stock.", systemImage: "bell.slash.fill")
+            if let warning {
+                Label(warning, systemImage: "bell.slash.fill")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.orange)
             } else {
-                Text("Every size you watch is checked in all \(status.areas.count) areas, every \(status.pace.intervalSeconds)s.")
+                Text("Every size you watch is checked in \(areas), every \(status.pace.intervalSeconds)s.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .card()
     }
+
+    private var warning: String? {
+        if device.muted { return "This iPhone is muted, so it won't hear about any stock." }
+        if device.parts.isEmpty { return "No alerts are on, so you won't hear about any stock." }
+        if device.areas.isEmpty { return "No areas are on, so you won't hear about any stock." }
+        return nil
+    }
+
+    private var areas: String {
+        let count = device.areas.count
+        if count == 1 { return "your area" }
+        return count == status.areas.count ? "all \(count) areas" : "your \(count) areas"
+    }
 }
 
 private struct AlertChip: View {
     let model: StatusModel
     let status: Status
+    let device: Status.Device
     let phone: Status.Model
     let finish: Finish
 
     @State private var confirmingOff = false
 
     var body: some View {
-        let watching = status.config.parts.contains(phone.part)
+        let watching = device.parts.contains(phone.part)
         let inStock = status.sightings.contains { $0.part == phone.part }
         Button {
             if watching {
@@ -122,7 +141,7 @@ private struct AlertChip: View {
                 Task { await model.setWatching(phone.part, false) }
             }
         } message: {
-            Text("You won't hear when it's in stock at any of the \(status.storeCount) stores.")
+            Text("This iPhone won't hear when it's in stock at any of its \(status.storeCount(in: device.areas)) stores.")
         }
         .accessibilityLabel("\(phone.name), \(watching ? "alerts on" : "alerts off")")
     }
@@ -136,6 +155,7 @@ private struct AlertChip: View {
 private struct AlarmCard: View {
     let model: StatusModel
     let status: Status
+    let device: Status.Device
 
     @State private var permission = AlarmManager.shared.authorizationState
     @State private var choosingHours = false
@@ -148,7 +168,7 @@ private struct AlarmCard: View {
     private static let testDelay = 10
 
     var body: some View {
-        let alarm = status.config.alarm
+        let alarm = device.alarm
         VStack(alignment: .leading, spacing: 8) {
             CardHeader(title: "Alarm", symbol: "alarm", trailing: alarm.enabled ? alarm.hours : "Off")
             VStack(spacing: 0) {
@@ -226,7 +246,7 @@ private struct AlarmCard: View {
         }
         // Each turn of a wheel restarts this, so only where they stop is saved.
         .task(id: draft) {
-            guard let draft, draft.from != status.config.alarm.from || draft.to != status.config.alarm.to else { return }
+            guard let draft, draft.from != device.alarm.from || draft.to != device.alarm.to else { return }
             do { try await Task.sleep(for: .seconds(0.6)) } catch { return }
             await model.setAlarmHours(from: draft.from, to: draft.to)
         }
@@ -324,24 +344,28 @@ private struct CheckingCard: View {
         VStack(alignment: .leading, spacing: 8) {
             CardHeader(title: "Checking", symbol: "dot.radiowaves.left.and.right")
             VStack(spacing: 0) {
-                Toggle("Check Apple for stock", isOn: Binding(
-                    get: { !status.config.paused },
-                    set: { checking in
-                        if checking {
-                            Task { await model.setPaused(false) }
-                        } else {
-                            confirmingPause = true
+                if status.isOwner {
+                    Toggle("Check Apple for stock", isOn: Binding(
+                        get: { !status.config.paused },
+                        set: { checking in
+                            if checking {
+                                Task { await model.setPaused(false) }
+                            } else {
+                                confirmingPause = true
+                            }
                         }
+                    ))
+                    .disabled(model.isWorking)
+                    .padding(.vertical, 7)
+                    .confirmationDialog("Pause checking?", isPresented: $confirmingPause, titleVisibility: .visible) {
+                        Button("Pause", role: .destructive) {
+                            Task { await model.setPaused(true) }
+                        }
+                    } message: {
+                        Text("No phone will get alerts until you turn it back on.")
                     }
-                ))
-                .disabled(model.isWorking)
-                .padding(.vertical, 7)
-                .confirmationDialog("Pause checking?", isPresented: $confirmingPause, titleVisibility: .visible) {
-                    Button("Pause", role: .destructive) {
-                        Task { await model.setPaused(true) }
-                    }
-                } message: {
-                    Text("No alerts will arrive until you turn it back on.")
+                } else {
+                    Row("Checking Apple for stock", value: status.config.paused ? "Paused" : "On")
                 }
                 Divider()
                 Row("Each size, each area", value: "every \(status.pace.intervalSeconds)s")
@@ -370,12 +394,35 @@ private struct NotificationsCard: View {
 
     @State private var testResult: String?
     @State private var sendingTest = false
+    @State private var confirmingMute = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             CardHeader(title: "Notifications", symbol: "iphone.radiowaves.left.and.right")
             VStack(spacing: 0) {
                 Row("This iPhone") { registration }
+                if let device = status.device {
+                    Divider()
+                    Toggle("Mute this iPhone", isOn: Binding(
+                        get: { device.muted },
+                        set: { muted in
+                            if muted {
+                                confirmingMute = true
+                            } else {
+                                Task { await model.setMuted(false) }
+                            }
+                        }
+                    ))
+                    .disabled(model.isWorking)
+                    .padding(.vertical, 7)
+                    .confirmationDialog("Mute this iPhone?", isPresented: $confirmingMute, titleVisibility: .visible) {
+                        Button("Mute", role: .destructive) {
+                            Task { await model.setMuted(true) }
+                        }
+                    } message: {
+                        Text("It won't get stock alerts or warnings until you turn this off. Other phones still will.")
+                    }
+                }
                 Divider()
                 Row("Devices registered", value: "\(status.devices)")
             }
@@ -453,10 +500,42 @@ private struct TrailingIcon: LabelStyle {
     }
 }
 
+// MARK: - Unregistered
+
+/// Alerts and the alarm are this iPhone's own, so they wait until it has registered.
+private struct UnregisteredCard: View {
+    let model: StatusModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            CardHeader(title: "Alerts", symbol: "bell.badge")
+            switch model.registration {
+            case .pending, .registered:
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Registering this iPhone…")
+                }
+                .padding(.vertical, 7)
+            case let .failed(message):
+                Label("Couldn't register: \(message)", systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .padding(.vertical, 7)
+            }
+            Text("Each phone chooses its own models, areas and alarm hours once it's registered for notifications.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .card()
+    }
+}
+
 // MARK: - Areas
 
-/// Each search the Worker runs, opening up to the stores it watches.
+/// Each search the Worker runs, opening up to the stores it watches. The tick is whether this iPhone
+/// hears about stock there.
 private struct AreasCard: View {
+    let model: StatusModel
     let status: Status
 
     @State private var expanded: Set<String> = []
@@ -467,7 +546,12 @@ private struct AreasCard: View {
             VStack(spacing: 0) {
                 ForEach(status.areas) { area in
                     if area.id != status.areas.first?.id { Divider() }
-                    areaRow(area)
+                    HStack(spacing: 12) {
+                        if let device = status.device {
+                            AreaTick(model: model, status: status, area: area, on: device.areas.contains(area.search))
+                        }
+                        areaRow(area)
+                    }
                     if expanded.contains(area.id) {
                         VStack(spacing: 0) {
                             ForEach(area.stores) { store in
@@ -480,12 +564,18 @@ private struct AreasCard: View {
                 }
             }
             .clipped()
-            Text("Each area is one search on Apple. Change them with PUT /config on the Worker.")
+            Text(caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .card()
         .sensoryFeedback(.selection, trigger: expanded)
+    }
+
+    private var caption: String {
+        let ticks = status.device == nil ? "" : "Tick the areas this iPhone hears about. "
+        let changing = status.isOwner ? " Change them with PUT /config on the Worker." : ""
+        return "\(ticks)Each area is one search on Apple.\(changing)"
     }
 
     private func areaRow(_ area: Status.Area) -> some View {
@@ -533,6 +623,43 @@ private struct AreasCard: View {
         }
         .padding(.vertical, 6)
         .padding(.leading, 12)
+    }
+}
+
+/// Turning an area on is a tap; turning one off asks first, as for a model.
+private struct AreaTick: View {
+    let model: StatusModel
+    let status: Status
+    let area: Status.Area
+    let on: Bool
+
+    @State private var confirmingOff = false
+
+    var body: some View {
+        Button {
+            if on {
+                confirmingOff = true
+            } else {
+                Task { await model.setArea(area.search, true) }
+            }
+        } label: {
+            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundStyle(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .contentTransition(.symbolEffect(.replace))
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.isWorking)
+        .sensoryFeedback(.impact(weight: .light), trigger: on)
+        .confirmationDialog("Turn off alerts in \(area.name)?", isPresented: $confirmingOff, titleVisibility: .visible) {
+            Button("Turn Off Alerts", role: .destructive) {
+                Task { await model.setArea(area.search, false) }
+            }
+        } message: {
+            Text("This iPhone won't hear about stock at any of its \(area.stores.count) stores.")
+        }
+        .accessibilityLabel("\(area.name), \(on ? "alerts on" : "alerts off")")
     }
 }
 

@@ -302,7 +302,7 @@ fun Ticker(model: StatusModel, status: Status, finish: Finish, open: () -> Unit)
             if (!paused) Symbol(Icons.Rounded.KeyboardArrowUp, Type.caption.copy(fontSize = 14.sp), tint = ink.tertiary)
         }
 
-        if (paused) {
+        if (paused && status.isOwner) {
             ProminentButton(onClick = { model.launch { setPaused(false) } }, enabled = !model.isWorking) { Text("Resume") }
         }
     }

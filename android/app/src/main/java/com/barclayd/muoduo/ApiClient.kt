@@ -20,7 +20,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 
-class ApiClient(private val http: OkHttpClient) {
+/** [deviceID] is this install's own id, sent with every request, so the Worker can keep this phone's settings apart. */
+class ApiClient(private val http: OkHttpClient, private val deviceID: String) {
     class ApiException(message: String) : IOException(message)
 
     @Serializable private data class ErrorBody(val error: String)
@@ -33,6 +34,10 @@ class ApiClient(private val http: OkHttpClient) {
     suspend fun registerDevice(token: String): Status =
         send("POST", "devices", json.encodeToString(DeviceRegistration(token, platform = "android")))
 
+    /** This phone's own settings. */
+    suspend fun updateDevice(patch: DevicePatch): Status = send("PUT", "device", json.encodeToString(patch))
+
+    /** Settings shared by every phone. Only the owner's key can change them. */
     suspend fun updateConfig(patch: ConfigPatch): Status = send("PUT", "config", json.encodeToString(patch))
 
     suspend fun checkNow(): Status = send("POST", "check")
@@ -48,6 +53,7 @@ class ApiClient(private val http: OkHttpClient) {
         val request = Request.Builder()
             .url(base.resolve(path)!!)
             .header("Authorization", "Bearer ${BuildConfig.API_TOKEN}")
+            .header("x-device-id", deviceID)
             .method(method, body?.toRequestBody("application/json".toMediaType()))
             .build()
         val call = http.newCall(request).apply { timeout().timeout(timeoutSeconds, TimeUnit.SECONDS) }

@@ -231,7 +231,7 @@ struct Ticker: View {
             .buttonStyle(.plain)
             .accessibilityHint("Shows live activity")
 
-            if status.config.paused {
+            if status.config.paused, status.isOwner {
                 Button("Resume") { Task { await model.setPaused(false) } }
                     .buttonStyle(.glassProminent)
                     .disabled(model.isWorking)

@@ -50,7 +50,7 @@ struct ActivityPage: View {
                 LiveDot(color: status.state.color, trigger: model.pulses, size: 9)
                 Text(headline(status)).font(.headline)
                 Spacer()
-                if status.config.paused {
+                if status.config.paused, status.isOwner {
                     Button("Resume") { Task { await model.setPaused(false) } }
                         .buttonStyle(.glassProminent)
                         .disabled(model.isWorking)

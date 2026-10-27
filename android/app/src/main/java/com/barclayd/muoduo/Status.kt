@@ -31,15 +31,24 @@ data class Status(
     /** Most recent first. */
     val recentChecks: List<Check> = emptyList(),
     val devices: Int = 0,
+    /** Null until this phone has registered for notifications. */
+    val device: Device? = null,
+    /** "friend" with a friend's key, which can't pause checking. */
+    val role: String? = null,
     val nextCheckAt: Instant? = null,
     val models: List<Model> = emptyList(),
 ) {
     @Serializable
-    data class Config(
+    data class Config(val intervalSeconds: Int, val paused: Boolean)
+
+    /** This phone's own settings: what it hears about, and when stock rings an alarm. */
+    @Serializable
+    data class Device(
         val parts: List<String>,
-        val intervalSeconds: Int,
-        val paused: Boolean,
         val alarm: Alarm,
+        /** The searches of the areas it hears about. */
+        val areas: List<String>,
+        val muted: Boolean,
     )
 
     /** Stock found between these UK hours also rings an alarm. From is included, to isn't. */
@@ -153,6 +162,11 @@ data class Status(
 
     val storeCount get() = areas.sumOf { it.stores.size }
 
+    /** The stores in the areas this phone hears about. */
+    fun storeCount(searches: List<String>) = areas.filter { it.search in searches }.sumOf { it.stores.size }
+
+    val isOwner get() = role != "friend"
+
     val state: LiveState
         get() = when {
             config.paused -> LiveState.Paused
@@ -174,10 +188,15 @@ sealed interface LiveState {
 }
 
 @Serializable
-data class ConfigPatch(
+data class ConfigPatch(val paused: Boolean? = null)
+
+/** Changes to this phone's own settings. [areas] are the searches it wants to hear about. */
+@Serializable
+data class DevicePatch(
     val parts: List<String>? = null,
-    val paused: Boolean? = null,
     val alarm: Status.Alarm? = null,
+    val areas: List<String>? = null,
+    val muted: Boolean? = null,
 )
 
 @Serializable

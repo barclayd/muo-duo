@@ -4,10 +4,17 @@ import Foundation
 /// Mirrors `GET /status` on the Worker.
 struct Status: Decodable {
     struct Config: Decodable {
-        let parts: [String]
         let intervalSeconds: Int
         let paused: Bool
+    }
+
+    /// This iPhone's own settings: what it hears about, and when stock rings an alarm.
+    struct Device: Decodable, Equatable {
+        let parts: [String]
         let alarm: Alarm
+        /// The searches of the areas it hears about.
+        let areas: [String]
+        let muted: Bool
     }
 
     /// Stock found between these UK hours also rings an alarm. From is included, to isn't.
@@ -134,8 +141,14 @@ struct Status: Decodable {
     /// Most recent first.
     let recentChecks: [Check]
     let devices: Int
+    /// Nil until this iPhone has registered for notifications.
+    let device: Device?
+    /// "friend" with a friend's key, which can't pause checking.
+    let role: String?
     let nextCheckAt: Date?
     let models: [Model]
+
+    var isOwner: Bool { role != "friend" }
 
     func model(for part: String) -> Model? {
         models.first { $0.part == part }
@@ -159,6 +172,11 @@ struct Status: Decodable {
         areas.reduce(0) { $0 + $1.stores.count }
     }
 
+    /// The stores in the areas this iPhone hears about.
+    func storeCount(in searches: [String]) -> Int {
+        areas.filter { searches.contains($0.search) }.reduce(0) { $0 + $1.stores.count }
+    }
+
     var state: LiveState {
         if config.paused { return .paused }
         if health.consecutiveFailures > 0 { return .failing(health.lastError) }
@@ -177,9 +195,15 @@ enum LiveState: Equatable {
 }
 
 struct ConfigPatch: Encodable {
-    var parts: [String]?
     var paused: Bool?
+}
+
+/// Changes to this iPhone's own settings. `areas` are the searches it wants to hear about.
+struct DevicePatch: Encodable {
+    var parts: [String]?
     var alarm: Status.Alarm?
+    var areas: [String]?
+    var muted: Bool?
 }
 
 struct TestResult: Decodable {
