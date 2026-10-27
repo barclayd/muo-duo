@@ -12,6 +12,8 @@
 <p align="center">
   <img alt="iOS 26+" src="https://img.shields.io/badge/iOS-26%2B-000000?logo=apple&logoColor=white">
   <img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-Liquid%20Glass-F05138?logo=swift&logoColor=white">
+  <img alt="Android 12+" src="https://img.shields.io/badge/Android-12%2B-34A853?logo=android&logoColor=white">
+  <img alt="Jetpack Compose" src="https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white">
   <img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white">
   <img alt="Bun" src="https://img.shields.io/badge/Bun-000000?logo=bun&logoColor=white">
@@ -21,12 +23,13 @@
 
 The iPhone Duo is rare, and when Apple restocks it, it sells out almost instantly. Muo Duo watches 20 Apple Stores across London, the south of England and Manchester, asking Apple once a second. The moment one is available to collect **today**, your iPhone gets an alert that breaks through Focus, and one tap opens it in the Apple Store app. Restocks tend to land first thing, so in the hours you choose it rings an alarm too, even on silent.
 
-It comes in two parts:
+It comes in three parts:
 
 | | |
 | --- | --- |
 | ☁️ **[`worker/`](worker)** | A Cloudflare Worker with one Durable Object. It does all the checking, polling two of Apple's pickup endpoints one request a second, and sends the pushes through APNs. |
 | 📱 **[`ios/`](ios)** | A SwiftUI app with a Liquid Glass design. It shows the checker working live, where and when an iPhone Duo was last in stock, a map of the stores, and which models alert you. |
+| 🤖 **[`android/`](android)** | The same app for Android 12 and later, in Kotlin with Jetpack Compose: the same screens, and the same glass over the same sky. |
 
 ## Features
 
@@ -222,6 +225,29 @@ open MuoDuo.xcodeproj
 
 Run it on your iPhone, allow notifications, then use **Settings → Send test notification**. If iOS asks, allow **Time Sensitive** notifications so alerts break through Focus modes, and allow alarms. Then use **Settings → Test Alarm** and lock the phone.
 
+### 4. 🤖 Android app
+
+You'll need JDK 21 and the Android SDK. [Android Studio](https://developer.android.com/studio) brings both, or without it:
+
+```sh
+brew install openjdk@21
+brew install --cask android-commandlinetools
+sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"
+```
+
+Then build it and install it on your phone over USB, with [USB debugging](https://developer.android.com/studio/debug/dev-options#Enable-debugging) on:
+
+```sh
+cd android
+cp secrets.example.properties secrets.properties   # paste the API_TOKEN in
+./gradlew assembleRelease
+adb install app/build/outputs/apk/release/app-release.apk
+```
+
+The release build is signed with your machine's debug key, which is enough to install it yourself. Allow notifications when it asks.
+
+Android has no AlarmKit, so the alarm is a notification on its own channel that rings on the alarm volume until it's stopped, and takes over the lock screen as the Clock app's alarm does. Do Not Disturb lets it through, unless you've turned off alarms there. Android 14 and later can turn off an app's full-screen alerts; if it has, **Settings** in the app says so and opens the switch. Plain stock alerts don't break through Do Not Disturb on their own: to let them, add Muo Duo to its exceptions.
+
 ## API
 
 All routes need `Authorization: Bearer <API_TOKEN>`.
@@ -241,6 +267,11 @@ cd worker
 bun test
 bun run typecheck   # regenerates worker-configuration.d.ts first
 bunx wrangler dev   # needs API_TOKEN in worker/.dev.vars
+```
+
+```sh
+cd android
+./gradlew assembleDebug   # or installDebug, to a phone or emulator
 ```
 
 Under `wrangler dev`, Apple answers the local runtime's requests with HTTP 403, though plain `curl` from the same machine gets 200. The deployed Worker isn't affected, so test real checks against the deployment.

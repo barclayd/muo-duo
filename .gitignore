@@ -19,3 +19,16 @@ build/
 
 .claude/settings.local.json
 .DS_Store
+
+# Android
+android/secrets.properties
+android/app/google-services.json
+android/local.properties
+android/.gradle/
+android/.kotlin/
+android/**/build/
+android/.idea/
+*.keystore
+*.jks
+# Firebase service account for the Worker's FCM secret
+*service-account*.json
