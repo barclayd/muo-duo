@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
-import { AppleError, fetchStores, forToday, parsePickup } from '../src/apple';
+import { AppleError, fetchStores, forToday, parsePickup, parseRetryAfter } from '../src/apple';
 import fixture from './fixtures/pickup-iphone-17.json';
 import stores from './fixtures/stores-iphone-17.json';
 
@@ -78,5 +78,23 @@ describe('fetchStores', () => {
   test("passes on Apple's status, so pushback can be told apart", async () => {
     spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 541 }));
     expect(fetchStores(['MK2D4QN/A'], 'NW6 5PU')).rejects.toMatchObject({ status: 541, message: 'Apple returned HTTP 541 for every store near NW6 5PU' });
+  });
+
+  test('passes on how long Apple asked us to wait', async () => {
+    spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': '120' } }));
+    expect(fetchStores(['MK2D4QN/A'], 'NW6 5PU')).rejects.toMatchObject({ status: 429, retryAfterMs: 120_000 });
+  });
+});
+
+describe('parseRetryAfter', () => {
+  const now = Date.parse('2026-10-27T00:00:00Z');
+
+  test('reads seconds or a date', () => {
+    expect(parseRetryAfter('90', now)).toBe(90_000);
+    expect(parseRetryAfter('Tue, 27 Oct 2026 00:10:00 GMT', now)).toBe(10 * 60_000);
+  });
+
+  test("is nothing when there's nothing to wait for", () => {
+    for (const header of [null, '', '0', 'soon', 'Mon, 26 Oct 2026 23:00:00 GMT']) expect(parseRetryAfter(header, now)).toBeUndefined();
   });
 });

@@ -6,16 +6,40 @@ import { findModel } from './catalog';
 // minute, taking turns, and an area is swept straight away when a quick check finds new stock there, so
 // the alert names every store that has it. Apple is warier of this endpoint, so when it pushes back,
 // sweeps stop for a while and the quick checks carry on without them.
+//
+// Apple's bot shield (HTTP 541) often turns one area away and answers the next a few seconds later, so
+// a 541 rests only its own area. All sweeps stop once every area has been turned away in a row, or
+// when Apple says 403, 429 or how long to wait.
 
 export interface Sweeps {
   // Each area's latest answer, by its search.
   answers: Record<string, { at: number; sightings: Sighting[] }>;
   // When each area was last asked, answered or not, so they take turns.
   askedAt: Record<string, number>;
-  // Pushbacks in a row, and when sweeping can start again after the latest.
+  // Areas resting after a 541, until when, and how many 541s in a row they've had.
+  rests: Record<string, { until: number; level: number }>;
+  // Areas turned away since the last answer.
+  turnedAway: string[];
+  // Pauses of every sweep in a row, and when sweeping can start again after the latest.
   pushbacks: number;
   pausedUntil?: number;
   lastError?: string;
+  // The latest sweeps, newest first, to show how often Apple answers them.
+  recent: Outcome[];
+}
+
+export interface Outcome {
+  at: number;
+  area: string;
+  ok: boolean;
+  status?: number;
+}
+
+export interface Failure {
+  error: string;
+  status?: number;
+  // How long Apple asked us to wait, if it said.
+  retryAfterMs?: number;
 }
 
 export const SWEEP_EVERY_MS = 60_000;
@@ -27,35 +51,64 @@ export const SWEEP_TIMEOUT_MS = 10_000;
 // Each area is normally swept every few minutes. One that hasn't been for this long no longer counts.
 export const SWEEP_TRUSTED_MS = 5 * 60_000;
 const PAUSES_MS = [5, 10, 20, 30].map((minutes) => minutes * 60_000);
+// Retry-After is honoured up to an hour, so a stray one can't stop sweeps for days.
+const LONGEST_WAIT_MS = 60 * 60_000;
+// About an hour of sweeps.
+const RECENT_SWEEPS = 60;
 
-export const emptySweeps = (): Sweeps => ({ answers: {}, askedAt: {}, pushbacks: 0 });
+export const emptySweeps = (): Sweeps => ({ answers: {}, askedAt: {}, rests: {}, turnedAway: [], pushbacks: 0, recent: [] });
+
+const pause = (inARow: number) => PAUSES_MS[Math.min(inARow, PAUSES_MS.length) - 1]!;
 
 const paused = (sweeps: Sweeps, now: number) => sweeps.pausedUntil !== undefined && now < sweeps.pausedUntil;
 
+export const resting = (sweeps: Sweeps, area: string, now: number) => now < (sweeps.rests[area]?.until ?? -Infinity);
+
 const askedAt = (sweeps: Sweeps, area: string) => sweeps.askedAt[area] ?? -Infinity;
 
-// The area asked about longest ago, once a minute has passed since the last sweep.
+// The area asked about longest ago that isn't resting, once a minute has passed since the last sweep.
 export function sweepDue<A extends { search: string }>(sweeps: Sweeps, areas: readonly A[], now: number): A | undefined {
-  if (paused(sweeps, now) || areas.length === 0) return undefined;
+  if (paused(sweeps, now)) return undefined;
   if (now - Math.max(-Infinity, ...Object.values(sweeps.askedAt)) < SWEEP_EVERY_MS) return undefined;
-  return areas.reduce((a, b) => (askedAt(sweeps, b.search) < askedAt(sweeps, a.search) ? b : a));
+  const ready = areas.filter((a) => !resting(sweeps, a.search, now));
+  if (ready.length === 0) return undefined;
+  return ready.reduce((a, b) => (askedAt(sweeps, b.search) < askedAt(sweeps, a.search) ? b : a));
 }
 
-export const confirmDue = (sweeps: Sweeps, area: string, now: number) => !paused(sweeps, now) && now - askedAt(sweeps, area) >= CONFIRM_GAP_MS;
+export const confirmDue = (sweeps: Sweeps, area: string, now: number) =>
+  !paused(sweeps, now) && !resting(sweeps, area, now) && now - askedAt(sweeps, area) >= CONFIRM_GAP_MS;
 
 export const asked = (sweeps: Sweeps, area: string, now: number): Sweeps => ({ ...sweeps, askedAt: { ...sweeps.askedAt, [area]: now } });
 
-export const answered = (sweeps: Sweeps, area: string, sightings: Sighting[], at: number): Sweeps => ({
-  answers: { ...sweeps.answers, [area]: { at, sightings } },
-  askedAt: sweeps.askedAt,
-  pushbacks: 0,
-});
+const remember = (sweeps: Sweeps, outcome: Outcome) => [outcome, ...sweeps.recent].slice(0, RECENT_SWEEPS);
 
-// Pushback stops sweeps for longer each time in a row. Any other failure just waits for the next turn.
-export function failed(sweeps: Sweeps, error: string, pushback: boolean, now: number): Sweeps {
-  if (!pushback) return { ...sweeps, lastError: error };
+export function answered(sweeps: Sweeps, area: string, sightings: Sighting[], at: number): Sweeps {
+  const { [area]: _, ...rests } = sweeps.rests;
+  return {
+    answers: { ...sweeps.answers, [area]: { at, sightings } },
+    askedAt: sweeps.askedAt,
+    rests,
+    turnedAway: [],
+    pushbacks: 0,
+    recent: remember(sweeps, { at, area, ok: true, status: 200 }),
+  };
+}
+
+// A 541 rests its area, for longer each time in a row. Once every area has been turned away since the
+// last answer, or on 403, 429 or a Retry-After, every sweep stops, for longer each time in a row. Any
+// other failure just waits for the next turn.
+export function failed(sweeps: Sweeps, area: string, { error, status, retryAfterMs = 0 }: Failure, areas: readonly string[], now: number): Sweeps {
+  let next: Sweeps = { ...sweeps, lastError: error, recent: remember(sweeps, { at: now, area, ok: false, status }) };
+  let everywhere = false;
+  if (status === 541) {
+    const level = (sweeps.rests[area]?.level ?? 0) + 1;
+    const turnedAway = [...new Set([...sweeps.turnedAway, area])];
+    next = { ...next, rests: { ...sweeps.rests, [area]: { until: now + pause(level), level } }, turnedAway };
+    everywhere = areas.every((a) => turnedAway.includes(a));
+  }
+  if (!everywhere && status !== 403 && status !== 429 && retryAfterMs === 0) return next;
   const pushbacks = sweeps.pushbacks + 1;
-  return { ...sweeps, pushbacks, pausedUntil: now + PAUSES_MS[Math.min(pushbacks, PAUSES_MS.length) - 1]!, lastError: error };
+  return { ...next, pushbacks, pausedUntil: now + Math.max(pause(pushbacks), Math.min(retryAfterMs, LONGEST_WAIT_MS)) };
 }
 
 // A quick check about one model answers for the other colours at its capacity.

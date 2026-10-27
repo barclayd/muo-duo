@@ -6,7 +6,7 @@ import { type Area, DEFAULT_AREAS, DEFAULT_PARTS, imageUrl, MODELS, partsToQuery
 import { type Episode, recordSeen } from './history';
 import { type CheckerNote, emptyLog, note, recordStock, type StockLog } from './log';
 import { cycleSeconds, isPushback, MIN_SECONDS_BETWEEN_REQUESTS, type Pace, shouldAlertSlowdown, slowDown, speedUp, tickDelaySeconds } from './pace';
-import { answered, asked, CONFIRM_TIMEOUT_MS, confirmDue, emptySweeps, failed, outdate, SWEEP_EVERY_MS, SWEEP_TIMEOUT_MS, standing, sweepDue, type Sweeps } from './sweep';
+import { answered, asked, CONFIRM_TIMEOUT_MS, confirmDue, emptySweeps, failed, outdate, resting, SWEEP_EVERY_MS, SWEEP_TIMEOUT_MS, standing, sweepDue, type Sweeps } from './sweep';
 
 export interface Config {
   areas: Area[];
@@ -112,6 +112,9 @@ export class Checker extends DurableObject<Env> {
         lastAt: Object.values(sweeps.askedAt).length > 0 ? iso(Math.max(...Object.values(sweeps.askedAt))) : null,
         pausedUntil: sweeps.pausedUntil && sweeps.pausedUntil > Date.now() ? iso(sweeps.pausedUntil) : null,
         lastError: sweeps.lastError ?? null,
+        // Areas resting after a 541, and until when.
+        resting: Object.fromEntries(config.areas.filter((a) => resting(sweeps, a.search, Date.now())).map((a) => [a.name, iso(sweeps.rests[a.search]!.until)])),
+        recent: sweeps.recent.map((o) => ({ at: iso(o.at), area: config.areas.find((a) => a.search === o.area)?.name ?? o.area, ok: o.ok, status: o.status ?? null })),
       },
       sightings: await this.sightings(),
       areas: config.areas.map((area) => {
@@ -371,9 +374,10 @@ export class Checker extends DurableObject<Env> {
     } catch (error) {
       const timedOut = error instanceof DOMException && error.name === 'TimeoutError';
       const message = timedOut ? `no answer within ${timeoutMs / 1000}s` : error instanceof Error ? error.message : String(error);
-      const pushback = error instanceof AppleError && isPushback(error.status, 0);
+      const apple = error instanceof AppleError ? error : undefined;
+      const failure = { error: `${area.name}: ${message}`, status: apple?.status, retryAfterMs: apple?.retryAfterMs };
       this.logCheck(area, undefined, false, at);
-      return { sweeps: failed(sweeps, `${area.name}: ${message}`, pushback, Date.now()), sightings: [] };
+      return { sweeps: failed(sweeps, area.search, failure, config.areas.map((a) => a.search), Date.now()), sightings: [] };
     }
   }
 
@@ -457,12 +461,13 @@ export class Checker extends DurableObject<Env> {
     return Object.fromEntries(queries.flatMap((q) => (stored[q.key] ? [[q.key, stored[q.key]]] : [])));
   }
 
-  // Sweeps of the configured areas only, dropping any left over from an earlier config.
+  // Sweeps of the configured areas only, dropping any left over from an earlier config. Sweeps stored
+  // before areas rested on their own are filled in from empty.
   private async sweeps(config: Config): Promise<Sweeps> {
-    const stored = (await this.ctx.storage.get<Sweeps>('sweeps')) ?? emptySweeps();
+    const stored = { ...emptySweeps(), ...(await this.ctx.storage.get<Sweeps>('sweeps')) };
     const searches = new Set(config.areas.map((a) => a.search));
     const keep = <T>(byArea: Record<string, T>) => Object.fromEntries(Object.entries(byArea).filter(([search]) => searches.has(search)));
-    return { ...stored, answers: keep(stored.answers), askedAt: keep(stored.askedAt) };
+    return { ...stored, answers: keep(stored.answers), askedAt: keep(stored.askedAt), rests: keep(stored.rests), turnedAway: stored.turnedAway.filter((s) => searches.has(s)) };
   }
 
   // Names and places of the watched stores, as Apple last described them.

@@ -38,9 +38,19 @@ export class AppleError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    // How long Apple asked us to wait before asking again, if it said.
+    readonly retryAfterMs?: number,
   ) {
     super(message);
   }
+}
+
+// Retry-After is either a number of seconds or a date.
+export function parseRetryAfter(header: string | null, now: number): number | undefined {
+  if (!header?.trim()) return undefined;
+  const seconds = Number(header);
+  const ms = Number.isNaN(seconds) ? Date.parse(header) - now : seconds * 1000;
+  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
 }
 
 interface StoreList {
@@ -100,7 +110,7 @@ async function get(url: URL, what: string, signal?: AbortSignal): Promise<Pickup
     },
     signal,
   });
-  if (!res.ok) throw new AppleError(`Apple returned HTTP ${res.status} for ${what}`, res.status);
+  if (!res.ok) throw new AppleError(`Apple returned HTTP ${res.status} for ${what}`, res.status, parseRetryAfter(res.headers.get('Retry-After'), Date.now()));
 
   return parsePickup(await res.json());
 }
