@@ -71,6 +71,13 @@ final class StatusModel {
         await perform { try await $0.updateConfig(ConfigPatch(alarm: alarm)) }
     }
 
+    func setAlarmHours(from: Int, to: Int) async {
+        guard var alarm = status?.config.alarm else { return }
+        alarm.from = from
+        alarm.to = to
+        await perform { try await $0.updateConfig(ConfigPatch(alarm: alarm)) }
+    }
+
     func register(deviceToken: Data) async {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
         do {

@@ -47,7 +47,7 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         MuoDuoAPIBaseURL: $(MUODUO_API_BASE_URL)
         MuoDuoAPIToken: $(MUODUO_API_TOKEN)
-        NSAlarmKitUsageDescription: Stock found first thing in the morning rings an alarm, so a restock wakes you.
+        NSAlarmKitUsageDescription: Stock found in your alarm hours rings an alarm, so a restock wakes you.
 
   # Rings an alarm for stock pushed in the alarm hours. Alerts without that flag don't come through here.
   MuoDuoNotifications:
@@ -66,7 +66,7 @@ targets:
       path: MuoDuoNotifications/Info.plist
       properties:
         CFBundleDisplayName: Muo Duo
-        NSAlarmKitUsageDescription: Stock found first thing in the morning rings an alarm, so a restock wakes you.
+        NSAlarmKitUsageDescription: Stock found in your alarm hours rings an alarm, so a restock wakes you.
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
