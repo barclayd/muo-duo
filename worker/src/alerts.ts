@@ -65,7 +65,3 @@ export const testAlert = (alarm: boolean) => ({
   },
   ...(alarm && { alarm: true }),
 });
-
-export const healthAlert = (title: string, body: string) => ({
-  aps: { alert: { title, body }, sound: 'default', 'thread-id': 'health' },
-});
