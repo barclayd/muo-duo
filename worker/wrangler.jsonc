@@ -16,5 +16,5 @@
     "APNS_TEAM_ID": "R2GGK3VN2C",
     "APNS_TOPIC": "com.barclayd.muoduo"
   }
-  // Secrets (wrangler secret put): API_TOKEN, APNS_KEY, APNS_KEY_ID
+  // Secrets (wrangler secret put): API_TOKEN, APNS_KEY, APNS_KEY_ID, FCM_SERVICE_ACCOUNT
 }

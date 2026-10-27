@@ -1,12 +1,19 @@
 import { DurableObject } from 'cloudflare:workers';
 import { type AlarmWindow, currentSightings, healthAlert, inAlarmWindow, newSightings, stockAlert, testAlert } from './alerts';
-import { Apns, type ApnsResult, type Device } from './apns';
+import { Apns, type ApnsDevice } from './apns';
 import { AppleError, fetchPickup, fetchStores, forToday, type Sighting, type Store } from './apple';
 import { type Area, DEFAULT_AREAS, DEFAULT_PARTS, imageUrl, MODELS, partsToQuery, productUrl } from './catalog';
+import { Fcm, type FcmDevice, parseServiceAccount } from './fcm';
 import { type Episode, recordSeen } from './history';
 import { type CheckerNote, emptyLog, note, recordStock, type StockLog } from './log';
 import { cycleSeconds, isPushback, MIN_SECONDS_BETWEEN_REQUESTS, type Pace, shouldAlertSlowdown, slowDown, speedUp, tickDelaySeconds } from './pace';
+import type { PushResult } from './push';
 import { answered, asked, CONFIRM_TIMEOUT_MS, confirmDue, emptySweeps, failed, outdate, resting, SWEEP_EVERY_MS, SWEEP_TIMEOUT_MS, standing, sweepDue, type Sweeps } from './sweep';
+
+type Device = ApnsDevice | FcmDevice;
+
+// A device as the app registers it; the Checker notes when.
+type Registration = { token: string } & ({ platform: 'ios'; environment: ApnsDevice['environment'] } | { platform: 'android' });
 
 export interface Config {
   areas: Area[];
@@ -84,6 +91,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 export class Checker extends DurableObject<Env> {
   private running = false;
   private apns?: Apns;
+  private fcm?: Fcm;
   private recentChecks: Check[] = [];
 
   async status() {
@@ -144,9 +152,9 @@ export class Checker extends DurableObject<Env> {
     };
   }
 
-  async registerDevice(token: string, environment: Device['environment']) {
-    const devices = (await this.devices()).filter((d) => d.token !== token);
-    devices.push({ token, environment, registeredAt: new Date().toISOString() });
+  async registerDevice(registration: Registration) {
+    const devices = (await this.devices()).filter((d) => d.token !== registration.token);
+    devices.push({ ...registration, registeredAt: new Date().toISOString() });
     await this.ctx.storage.put('devices', devices);
     await this.ensureRunning();
   }
@@ -407,16 +415,12 @@ export class Checker extends DurableObject<Env> {
 
   private async notify(payload: object) {
     const devices = await this.devices();
-    const apns = this.getApns();
-    if (!apns) return { delivered: false, errors: ['APNs secrets are not configured'] };
     if (devices.length === 0) return { delivered: false, errors: ['No devices registered'] };
 
     const results = await Promise.all(
       devices.map(async (device) => ({
         device,
-        result: await apns
-          .send(device, payload)
-          .catch((e): ApnsResult => ({ ok: false, status: 0, reason: String(e), deviceGone: false })),
+        result: await this.push(device, payload).catch((e): PushResult => ({ ok: false, status: 0, reason: String(e), deviceGone: false })),
       })),
     );
 
@@ -424,13 +428,24 @@ export class Checker extends DurableObject<Env> {
     const gone = new Set(failures.filter((f) => f.deviceGone).map((f) => f.device.token));
     if (gone.size) await this.ctx.storage.put('devices', devices.filter((d) => !gone.has(d.token)));
     for (const f of failures) {
-      console.error(JSON.stringify({ event: 'push', ok: false, status: f.status, reason: f.reason, removed: f.deviceGone }));
+      const platform = f.device.platform ?? 'ios';
+      console.error(JSON.stringify({ event: 'push', ok: false, platform, status: f.status, reason: f.reason, removed: f.deviceGone }));
     }
 
     return {
       delivered: failures.length < results.length,
-      errors: failures.map((f) => `${f.status} ${f.reason}`),
+      errors: failures.map((f) => (f.status ? `${f.status} ${f.reason}` : f.reason)),
     };
+  }
+
+  // iPhones through APNs, Android phones through Firebase.
+  private async push(device: Device, payload: object): Promise<PushResult> {
+    if (device.platform === 'android') {
+      const fcm = this.getFcm();
+      return fcm ? fcm.send(device, payload) : { ok: false, status: 0, reason: 'Firebase secret is not configured', deviceGone: false };
+    }
+    const apns = this.getApns();
+    return apns ? apns.send(device, payload) : { ok: false, status: 0, reason: 'APNs secrets are not configured', deviceGone: false };
   }
 
   private getApns() {
@@ -438,6 +453,12 @@ export class Checker extends DurableObject<Env> {
     if (!APNS_KEY || !APNS_KEY_ID) return undefined;
     this.apns ??= new Apns({ keyP8: APNS_KEY, keyId: APNS_KEY_ID, teamId: APNS_TEAM_ID, topic: APNS_TOPIC });
     return this.apns;
+  }
+
+  private getFcm() {
+    if (!this.env.FCM_SERVICE_ACCOUNT) return undefined;
+    this.fcm ??= new Fcm(parseServiceAccount(this.env.FCM_SERVICE_ACCOUNT));
+    return this.fcm;
   }
 
   private async config(): Promise<Config> {
