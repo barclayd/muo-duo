@@ -17,7 +17,7 @@ const sky256: Sighting = { ...white256, part: 'MK2E4QN/A' };
 const white512: Sighting = { ...white256, part: 'MK2F4QN/A' };
 
 describe('sweepDue', () => {
-  test('sweeps the area asked about longest ago, a minute after the last sweep', () => {
+  test('sweeps the area asked about longest ago, five minutes after the last sweep', () => {
     let sweeps = asked(emptySweeps(), london.search, 0);
     expect(sweepDue(sweeps, [london, south], SWEEP_EVERY_MS - 1)).toBeUndefined();
     expect(sweepDue(sweeps, [london, south], SWEEP_EVERY_MS)).toBe(south);
@@ -26,13 +26,14 @@ describe('sweepDue', () => {
   });
 
   test('a 541 rests only its area, and the others keep their turns', () => {
-    const sweeps = failed(asked(emptySweeps(), london.search, 0), london.search, shield, searches, 0);
+    // Three in a row rest London for 20 minutes, past its next turn at 15.
+    let sweeps = emptySweeps();
+    for (let i = 0; i < 3; i++) sweeps = failed(asked(sweeps, london.search, 0), london.search, shield, searches, 0);
     expect(sweeps.pausedUntil).toBeUndefined();
-    expect(sweepDue(sweeps, areas, minute)).toBe(south);
-    let later = asked(asked(sweeps, south.search, minute), manchester.search, 2 * minute);
-    expect(sweepDue(later, areas, 3 * minute)).toBe(south);
-    later = asked(asked(later, south.search, 3 * minute), manchester.search, 4 * minute);
-    expect(sweepDue(later, areas, 5 * minute)).toBe(london);
+    sweeps = asked(asked(sweeps, south.search, 5 * minute), manchester.search, 10 * minute);
+    expect(sweepDue(sweeps, areas, 15 * minute)).toBe(south);
+    sweeps = asked(sweeps, south.search, 15 * minute);
+    expect(sweepDue(sweeps, areas, 20 * minute)).toBe(london);
   });
 
   test('rests an area for longer each 541 in a row', () => {
