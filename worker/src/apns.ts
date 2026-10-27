@@ -38,17 +38,55 @@ export async function signJwt(config: Pick<ApnsConfig, 'keyP8' | 'keyId' | 'team
   return `${signingInput}.${base64url(signature)}`;
 }
 
+export interface ProviderToken {
+  token: string;
+  issuedAt: number;
+  keyId: string;
+  teamId: string;
+}
+
+// Where the token is kept so it outlives the Checker restarting, which every deploy does.
+export interface TokenStore {
+  get(): Promise<ProviderToken | undefined>;
+  put(token: ProviderToken): Promise<void>;
+}
+
 export class Apns {
-  private jwt?: { token: string; issuedAt: number };
+  // Shared, so an alert going to several iPhones at once is sent with one token. APNs counts each new
+  // token as an update and answers 429 TooManyProviderTokenUpdates to more than one in 20 minutes.
+  private jwt?: Promise<ProviderToken>;
 
-  constructor(private readonly config: ApnsConfig) {}
+  constructor(
+    private readonly config: ApnsConfig,
+    private readonly store?: TokenStore,
+  ) {}
 
-  private async bearer() {
-    const now = Date.now();
-    if (!this.jwt || now - this.jwt.issuedAt > JWT_LIFETIME_MS) {
-      this.jwt = { token: await signJwt(this.config, now), issuedAt: now };
+  private async bearer(): Promise<string> {
+    const pending = this.jwt;
+    if (pending) {
+      const jwt = await pending;
+      if (Date.now() - jwt.issuedAt <= JWT_LIFETIME_MS) return jwt.token;
+      // Another send got here first and is already fetching the next one.
+      if (this.jwt !== pending) return this.bearer();
     }
-    return this.jwt.token;
+    const next = (this.jwt = this.current());
+    // One that failed isn't kept, so the next alert tries again.
+    next.catch(() => {
+      if (this.jwt === next) this.jwt = undefined;
+    });
+    return (await next).token;
+  }
+
+  // The stored token while it's young enough and from this key, or else a newly signed one. Storage
+  // failing costs at most a token update, never the alert.
+  private async current(): Promise<ProviderToken> {
+    const { keyId, teamId } = this.config;
+    const stored = await this.store?.get().catch(() => undefined);
+    if (stored && stored.keyId === keyId && stored.teamId === teamId && Date.now() - stored.issuedAt <= JWT_LIFETIME_MS) return stored;
+    const issuedAt = Date.now();
+    const jwt = { token: await signJwt(this.config, issuedAt), issuedAt, keyId, teamId };
+    await this.store?.put(jwt).catch(() => {});
+    return jwt;
   }
 
   async send(device: ApnsDevice, payload: object): Promise<PushResult> {

@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { type AlarmWindow, currentSightings, healthAlert, inAlarmWindow, newSightings, stockAlert, testAlert } from './alerts';
-import { Apns, type ApnsDevice } from './apns';
+import { Apns, type ApnsDevice, type ProviderToken } from './apns';
 import { AppleError, fetchPickup, fetchStores, forToday, type Sighting, type Store } from './apple';
 import { type Area, DEFAULT_AREAS, DEFAULT_PARTS, imageUrl, MODELS, partsToQuery, productUrl } from './catalog';
 import { Fcm, type FcmDevice, parseServiceAccount } from './fcm';
@@ -451,7 +451,13 @@ export class Checker extends DurableObject<Env> {
   private getApns() {
     const { APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC } = this.env;
     if (!APNS_KEY || !APNS_KEY_ID) return undefined;
-    this.apns ??= new Apns({ keyP8: APNS_KEY, keyId: APNS_KEY_ID, teamId: APNS_TEAM_ID, topic: APNS_TOPIC });
+    this.apns ??= new Apns(
+      { keyP8: APNS_KEY, keyId: APNS_KEY_ID, teamId: APNS_TEAM_ID, topic: APNS_TOPIC },
+      {
+        get: () => this.ctx.storage.get<ProviderToken>('apnsToken'),
+        put: (token) => this.ctx.storage.put('apnsToken', token),
+      },
+    );
     return this.apns;
   }
 
