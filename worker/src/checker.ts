@@ -1,26 +1,22 @@
 import { DurableObject } from 'cloudflare:workers';
-import { type AlarmWindow, currentSightings, healthAlert, inAlarmWindow, newSightings, stockAlert, testAlert } from './alerts';
-import { Apns, type ApnsDevice, type ProviderToken } from './apns';
+import { type AlarmWindow, currentSightings, DEFAULT_ALARM, healthAlert, newSightings, stockAlert, testAlert } from './alerts';
+import { Apns, type ProviderToken } from './apns';
 import { AppleError, fetchPickup, fetchStores, forToday, type Sighting, type Store } from './apple';
-import { type Area, DEFAULT_AREAS, DEFAULT_PARTS, imageUrl, MODELS, partsToQuery, productUrl } from './catalog';
-import { Fcm, type FcmDevice, parseServiceAccount } from './fcm';
+import { type Area, DEFAULT_AREAS, DEFAULT_PARTS, imageUrl, MODELS, productUrl } from './catalog';
+import { applyPatch, type Device, everyone, type PrefsPatch, prefsOf, type Query, queriesFor, register, type Registration, sees, stockAlerts, wantedIn, watching } from './devices';
+import { Fcm, parseServiceAccount } from './fcm';
 import { type Episode, recordSeen } from './history';
 import { type CheckerNote, emptyLog, note, recordStock, type StockLog } from './log';
 import { cycleSeconds, isPushback, MIN_SECONDS_BETWEEN_REQUESTS, type Pace, shouldAlertSlowdown, slowDown, speedUp, tickDelaySeconds } from './pace';
 import type { PushResult } from './push';
 import { answered, asked, CONFIRM_TIMEOUT_MS, confirmDue, emptySweeps, failed, outdate, resting, SWEEP_EVERY_MS, SWEEP_TIMEOUT_MS, standing, sweepDue, type Sweeps } from './sweep';
 
-type Device = ApnsDevice | FcmDevice;
-
-// A device as the app registers it; the Checker notes when.
-type Registration = { token: string } & ({ platform: 'ios'; environment: ApnsDevice['environment'] } | { platform: 'android' });
-
 export interface Config {
   areas: Area[];
-  parts: string[];
   intervalSeconds: number;
   paused: boolean;
-  // Stock found in these hours also rings an alarm on the phone.
+  // The models and alarm hours of phones registered by an app from before each phone had its own.
+  parts: string[];
   alarm: AlarmWindow;
 }
 
@@ -33,13 +29,6 @@ export interface Health {
   lastCanaryAt?: string;
   canaryMisses: number;
   staleAlerted: boolean;
-}
-
-// One model asked about in one area.
-interface Query {
-  key: string;
-  area: Area;
-  part: string;
 }
 
 // When each query was last asked, its last good answer (stores in its area only), and any of the
@@ -62,7 +51,7 @@ interface Check {
   ms: number;
 }
 
-const DEFAULT_CONFIG: Config = { areas: DEFAULT_AREAS, parts: DEFAULT_PARTS, intervalSeconds: 20, paused: false, alarm: { enabled: true, from: 6, to: 8 } };
+const DEFAULT_CONFIG: Config = { areas: DEFAULT_AREAS, parts: DEFAULT_PARTS, intervalSeconds: 20, paused: false, alarm: DEFAULT_ALARM };
 const FAILURES_BEFORE_ALERT = 3;
 const RECENT_CHECKS = 30;
 const LAST_SEEN = 20;
@@ -76,11 +65,6 @@ const CANARY_PART = 'MG6N4QN/A';
 const CANARY_INTERVAL_MS = 10 * 60_000;
 const CANARY_MISSES_BEFORE_ALERT = 3;
 
-// Models take turns with areas, so each area comes round every few seconds rather than in a burst.
-function queriesFor(config: Config): Query[] {
-  return partsToQuery(config.parts).flatMap((part) => config.areas.map((area) => ({ key: `${part}|${area.search}`, area, part })));
-}
-
 const iso = (ms: number) => new Date(ms).toISOString();
 
 // Single instance that polls Apple on a self-rescheduling alarm and pushes to registered devices.
@@ -88,18 +72,24 @@ const iso = (ms: number) => new Date(ms).toISOString();
 // is pushed as soon as any one answer shows it. Every five minutes an alarm sweeps an area's stores instead
 // (see sweep.ts). A tick usually writes only its answer, health and the next alarm, three storage
 // rows, so even at one request a second this stays well inside the paid plan's 50 million writes a month.
+// Each phone picks its own models, areas and alarm hours (see devices.ts). Apple is asked about
+// whatever any of them wants, and each phone is told only about its own.
 export class Checker extends DurableObject<Env> {
   private running = false;
   private apns?: Apns;
   private fcm?: Fcm;
   private recentChecks: Check[] = [];
 
-  async status() {
+  // Stock is shown as the phone asking would hear about it. An app without ids sees the config's models.
+  async status(deviceId?: string) {
     const alarm = await this.ctx.storage.getAlarm();
     const config = await this.config();
     const health = await this.health();
     const pace = await this.pace(config);
-    const queries = queriesFor(config);
+    const { devices, queries } = await this.wants(config);
+    const device = deviceId ? devices.find((d) => d.id === deviceId) : undefined;
+    const prefs = prefsOf(device, config);
+    const shown = sees(prefs, config.areas);
     const results = await this.results(queries);
     const stores = await this.stores();
     const seen = await this.ctx.storage.get<Seen>('seen');
@@ -124,7 +114,7 @@ export class Checker extends DurableObject<Env> {
         resting: Object.fromEntries(config.areas.filter((a) => resting(sweeps, a.search, Date.now())).map((a) => [a.name, iso(sweeps.rests[a.search]!.until)])),
         recent: sweeps.recent.map((o) => ({ at: iso(o.at), area: config.areas.find((a) => a.search === o.area)?.name ?? o.area, ok: o.ok, status: o.status ?? null })),
       },
-      sightings: await this.sightings(),
+      sightings: (await this.sightings()).filter(shown),
       areas: config.areas.map((area) => {
         const missing = new Set(queries.filter((q) => q.area === area).flatMap((q) => results[q.key]?.missing ?? []));
         return {
@@ -138,24 +128,40 @@ export class Checker extends DurableObject<Env> {
         };
       }),
       lastSeen: (seen?.episodes ?? [])
+        .filter(shown)
         .toSorted((a, b) => b.to - a.to)
         .slice(0, LAST_SEEN)
         .map((e) => ({ ...e, from: iso(e.from), to: iso(e.to) })),
       trackingSince: seen ? iso(seen.since) : null,
       // Newest first.
-      log: (log?.entries ?? []).toReversed(),
+      log: (log?.entries ?? []).filter((e) => !('part' in e) || shown(e)).toReversed(),
       loggingSince: log ? log.since : null,
       recentChecks: this.recentChecks.toReversed(),
-      devices: (await this.devices()).length,
+      devices: devices.length,
+      // This phone's own settings, once it's registered.
+      device: device ? { parts: prefs.parts, alarm: prefs.alarm, areas: config.areas.map((a) => a.search).filter((s) => !prefs.areasOff.includes(s)), muted: prefs.muted } : null,
       nextCheckAt: alarm === null ? null : iso(alarm),
       models: MODELS.map((m) => ({ ...m, url: productUrl(m), imageUrl: imageUrl(m) })),
     };
   }
 
-  async registerDevice(registration: Registration) {
-    const devices = (await this.devices()).filter((d) => d.token !== registration.token);
-    devices.push({ ...registration, registeredAt: new Date().toISOString() });
-    await this.ctx.storage.put('devices', devices);
+  async registerDevice(registration: Registration, id?: string) {
+    const config = await this.config();
+    await this.ctx.storage.put('devices', register(await this.devices(), registration, id, iso(Date.now()), config));
+    await this.ensureRunning();
+  }
+
+  // Returns an error if the phone isn't registered or an area isn't configured.
+  async updateDevice(id: string, patch: PrefsPatch): Promise<{ error: string; status: 400 | 404 } | undefined> {
+    const config = await this.config();
+    const devices = await this.devices();
+    const device = devices.find((d) => d.id === id);
+    if (!device) return { error: "This phone isn't registered", status: 404 };
+    const prefs = applyPatch(prefsOf(device, config), patch, config.areas);
+    if (typeof prefs === 'string') return { error: prefs, status: 400 };
+    device.prefs = prefs;
+    // Forget answers to queries no longer asked, so asking them again can't alert on old stock.
+    await this.ctx.storage.put({ devices, results: await this.results(queriesFor(config.areas, everyone(devices, config))) });
     await this.ensureRunning();
   }
 
@@ -172,7 +178,8 @@ export class Checker extends DurableObject<Env> {
 
     const config = { ...previous, ...patch };
     // Forget answers to queries no longer asked, so asking them again can't alert on old stock.
-    const writes: Record<string, unknown> = { config, results: await this.results(queriesFor(config)), sweeps: await this.sweeps(config) };
+    const { queries } = await this.wants(config);
+    const writes: Record<string, unknown> = { config, results: await this.results(queries), sweeps: await this.sweeps(config) };
     if (config.paused !== previous.paused) {
       const log = (await this.ctx.storage.get<StockLog>('log')) ?? emptyLog(iso(Date.now()));
       writes.log = note(log, { kind: config.paused ? 'paused' : 'resumed' }, iso(Date.now()));
@@ -182,14 +189,18 @@ export class Checker extends DurableObject<Env> {
     else await this.ensureRunning();
   }
 
-  async checkNow() {
+  async checkNow(deviceId?: string) {
     const config = await this.config();
-    await this.runCycle(config, { batch: queriesFor(config) });
-    return this.status();
+    await this.runCycle(config, { batch: (await this.wants(config)).queries });
+    return this.status(deviceId);
   }
 
-  async sendTest(alarm: boolean) {
-    return this.notify(testAlert(alarm));
+  // To the phone asking, even if it's muted, or from an app without ids, to every phone.
+  async sendTest(alarm: boolean, deviceId?: string) {
+    const devices = await this.devices();
+    const to = deviceId ? devices.filter((d) => d.id === deviceId) : devices;
+    if (deviceId && to.length === 0) return { delivered: false, errors: ["This phone isn't registered"] };
+    return this.deliver(to.map((device) => ({ device, payload: testAlert(alarm) })));
   }
 
   async ensureRunning() {
@@ -202,8 +213,8 @@ export class Checker extends DurableObject<Env> {
     if (config.paused) return;
     const started = Date.now();
 
-    const queries = queriesFor(config);
-    const sweep = sweepDue(await this.sweeps(config), config.areas, started);
+    const { queries, sweeping } = await this.wants(config);
+    const sweep = sweepDue(await this.sweeps(config), sweeping, started);
     if (queries.length > 0 && sweep) {
       await this.runCycle(config, { sweep });
     } else if (queries.length > 0) {
@@ -234,7 +245,9 @@ export class Checker extends DurableObject<Env> {
     const started = Date.now();
     if (quick) health.lastCheckAt = iso(started);
 
-    const queries = queriesFor(config);
+    const { devices, everyone: all, queries, sweeping } = await this.wants(config);
+    const watched = watching(all, config.areas);
+    const parts = [...new Set(all.flatMap((p) => p.parts))];
     const results = await this.results(queries);
     const startingSweeps = await this.sweeps(config);
     let sweeps = startingSweeps;
@@ -254,7 +267,7 @@ export class Checker extends DurableObject<Env> {
     try {
       const observed: Sighting[] = [];
       const sweep = async (area: Area, timeoutMs: number) => {
-        const answer = await this.sweep(config, area, sweeps, timeoutMs);
+        const answer = await this.sweep(area, wantedIn(area, all), sweeping, sweeps, timeoutMs);
         sweeps = answer.sweeps;
         observed.push(...answer.sightings);
       };
@@ -286,14 +299,14 @@ export class Checker extends DurableObject<Env> {
       const previous = await this.sightings();
       const inStock = () => {
         const swept = config.areas.map((area) => standing(sweeps, area.search, Date.now()));
-        return currentSightings([...Object.values(results).map((r) => r.sightings), ...swept], config.parts);
+        return currentSightings([...Object.values(results).map((r) => r.sightings), ...swept], parts).filter(watched);
       };
       let current = inStock();
       let fresh = newSightings(previous, current);
       // New stock from a quick check sweeps its area before the alert goes, so the alert lists every
       // store with it, not just the one the quick check named. It's asked without the usual second's
       // gap, as the alert is waiting on it and new stock is rare.
-      const confirming = quick ? config.areas.filter((a) => fresh.some((s) => a.stores.includes(s.storeNumber)) && confirmDue(sweeps, a.search, Date.now())) : [];
+      const confirming = quick ? sweeping.filter((a) => fresh.some((s) => a.stores.includes(s.storeNumber)) && confirmDue(sweeps, a.search, Date.now())) : [];
       for (const area of confirming) await sweep(area, CONFIRM_TIMEOUT_MS);
       if (confirming.length > 0) {
         current = inStock();
@@ -301,14 +314,18 @@ export class Checker extends DurableObject<Env> {
       }
 
       if (quick && health.consecutiveFailures >= FAILURES_BEFORE_ALERT) logNote({ kind: 'recovered' });
-      const watching = (s: Sighting) => config.parts.includes(s.part) && config.areas.some((a) => a.stores.includes(s.storeNumber));
       const answeredAt = iso(Date.now());
-      logChanges.push((log) => recordStock(log, current, watching, answeredAt));
-      // Only remember sightings once someone has been told, so a failed push retries next time.
-      const delivered = fresh.length === 0 || (await this.notify(stockAlert(fresh, inAlarmWindow(config.alarm, new Date())))).delivered;
+      logChanges.push((log) => recordStock(log, current, watched, answeredAt));
+      // Only remember sightings once someone has been told, so a failed push retries next time. Stock
+      // only muted phones want has nobody to wait for.
+      const alerts = stockAlerts(devices, fresh, config, config.areas, new Date());
+      const delivered =
+        fresh.length === 0 ||
+        (devices.length > 0 && alerts.length === 0) ||
+        (await this.deliver(alerts.map(({ device, sightings, alarm }) => ({ device, payload: stockAlert(sightings, alarm) })))).delivered;
       if (delivered && JSON.stringify(current) !== JSON.stringify(previous)) await this.ctx.storage.put('sightings', current);
       // History counts only what was seen just now, not answers carried over from earlier checks.
-      episodes = recordSeen(episodes, currentSightings([observed], config.parts), Date.now(), EPISODE_GAP_MS);
+      episodes = recordSeen(episodes, currentSightings([observed], parts).filter(watched), Date.now(), EPISODE_GAP_MS);
 
       if (!quick) {
         console.log(JSON.stringify({ event: 'sweep', area: tick.sweep.name, ms: Date.now() - started, inStock: current.length, fresh: fresh.length, delivered, error: sweeps.lastError }));
@@ -368,13 +385,13 @@ export class Checker extends DurableObject<Env> {
     }
   }
 
-  // Sweeps an area's stores. Apple's errors are kept with the sweeps rather than thrown, so they
-  // don't count against the checker's health.
-  private async sweep(config: Config, area: Area, sweeps: Sweeps, timeoutMs: number) {
+  // Sweeps an area's stores for the models wanted there. Apple's errors are kept with the sweeps rather
+  // than thrown, so they don't count against the checker's health.
+  private async sweep(area: Area, parts: readonly string[], sweeping: readonly Area[], sweeps: Sweeps, timeoutMs: number) {
     const at = Date.now();
     sweeps = asked(sweeps, area.search, at);
     try {
-      const answer = await fetchStores(config.parts, area.search, AbortSignal.timeout(timeoutMs));
+      const answer = await fetchStores(parts, area.search, AbortSignal.timeout(timeoutMs));
       const watched = new Set(area.stores);
       const sightings = answer.sightings.filter((s) => watched.has(s.storeNumber) && forToday(s));
       this.logCheck(area, undefined, true, at);
@@ -385,7 +402,7 @@ export class Checker extends DurableObject<Env> {
       const apple = error instanceof AppleError ? error : undefined;
       const failure = { error: `${area.name}: ${message}`, status: apple?.status, retryAfterMs: apple?.retryAfterMs };
       this.logCheck(area, undefined, false, at);
-      return { sweeps: failed(sweeps, area.search, failure, config.areas.map((a) => a.search), Date.now()), sightings: [] };
+      return { sweeps: failed(sweeps, area.search, failure, sweeping.map((a) => a.search), Date.now()), sightings: [] };
     }
   }
 
@@ -413,12 +430,17 @@ export class Checker extends DurableObject<Env> {
     }
   }
 
+  // Tells every phone that isn't muted.
   private async notify(payload: object) {
-    const devices = await this.devices();
-    if (devices.length === 0) return { delivered: false, errors: ['No devices registered'] };
+    const devices = (await this.devices()).filter((d) => !d.prefs?.muted);
+    return this.deliver(devices.map((device) => ({ device, payload })));
+  }
+
+  private async deliver(messages: readonly { device: Device; payload: object }[]) {
+    if (messages.length === 0) return { delivered: false, errors: ['No devices to send to'] };
 
     const results = await Promise.all(
-      devices.map(async (device) => ({
+      messages.map(async ({ device, payload }) => ({
         device,
         result: await this.push(device, payload).catch((e): PushResult => ({ ok: false, status: 0, reason: String(e), deviceGone: false })),
       })),
@@ -426,7 +448,8 @@ export class Checker extends DurableObject<Env> {
 
     const failures = results.flatMap(({ device, result }) => (result.ok ? [] : [{ device, ...result }]));
     const gone = new Set(failures.filter((f) => f.deviceGone).map((f) => f.device.token));
-    if (gone.size) await this.ctx.storage.put('devices', devices.filter((d) => !gone.has(d.token)));
+    // Read again, as a phone may have registered or changed its settings while the pushes were out.
+    if (gone.size) await this.ctx.storage.put('devices', (await this.devices()).filter((d) => !gone.has(d.token)));
     for (const f of failures) {
       const platform = f.device.platform ?? 'ios';
       console.error(JSON.stringify({ event: 'push', ok: false, platform, status: f.status, reason: f.reason, removed: f.deviceGone }));
@@ -465,6 +488,13 @@ export class Checker extends DurableObject<Env> {
     if (!this.env.FCM_SERVICE_ACCOUNT) return undefined;
     this.fcm ??= new Fcm(parseServiceAccount(this.env.FCM_SERVICE_ACCOUNT));
     return this.fcm;
+  }
+
+  // What every phone wants, so what to ask Apple, and the areas worth sweeping.
+  private async wants(config: Config) {
+    const devices = await this.devices();
+    const all = everyone(devices, config);
+    return { devices, everyone: all, queries: queriesFor(config.areas, all), sweeping: config.areas.filter((a) => wantedIn(a, all).length > 0) };
   }
 
   private async config(): Promise<Config> {
