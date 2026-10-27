@@ -221,10 +221,6 @@ struct Ticker: View {
                     .clipped()
 
                     if !status.config.paused {
-                        Text("every \(status.pace.intervalSeconds)s")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
                         Image(systemName: "chevron.up")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.tertiary)
