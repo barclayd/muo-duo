@@ -1,6 +1,6 @@
-import type { AlarmWindow } from './alerts';
-import { type Area, isKnownPart } from './catalog';
+import type { Area } from './catalog';
 import type { Config } from './checker';
+import { parseAlarm, parseParts, parsePrefsPatch } from './devices';
 
 export { Checker } from './checker';
 
@@ -8,12 +8,21 @@ const json = (data: unknown, status = 200) => Response.json(data, { status, head
 
 const checker = (env: Env) => env.CHECKER.get(env.CHECKER.idFromName('default'));
 
-function authorised(req: Request, env: Env) {
-  if (!env.API_TOKEN) return false;
+function bearer(req: Request, token: string | undefined) {
+  if (!token) return false;
   const given = new TextEncoder().encode(req.headers.get('authorization') ?? '');
-  const expected = new TextEncoder().encode(`Bearer ${env.API_TOKEN}`);
+  const expected = new TextEncoder().encode(`Bearer ${token}`);
   return given.byteLength === expected.byteLength && crypto.subtle.timingSafeEqual(given, expected);
 }
+
+// The owner's key does everything. A friend's can see the status, register its phone, change that
+// phone's settings and test it, but pausing, the areas and checking on demand stay with the owner.
+type Role = 'owner' | 'friend';
+
+const roleOf = (req: Request, env: Env): Role | undefined => (bearer(req, env.API_TOKEN) ? 'owner' : bearer(req, env.FRIEND_API_TOKEN) ? 'friend' : undefined);
+
+// Each install of the app makes up its own id and sends it with every request.
+const DEVICE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const MAX_AREAS = 6;
 
@@ -35,25 +44,15 @@ function parseAreas(areas: unknown): Area[] | string {
   return parsed;
 }
 
-function parseAlarm(alarm: unknown): AlarmWindow | string {
-  const { enabled, from, to } = (alarm ?? {}) as Record<string, unknown>;
-  const hour = (h: unknown): h is number => Number.isInteger(h) && (h as number) >= 0 && (h as number) <= 24;
-  if (typeof enabled !== 'boolean' || !hour(from) || !hour(to) || from >= to) {
-    return 'alarm must be { enabled, from, to }, with from and to whole UK hours and from before to';
-  }
-  return { enabled, from, to };
-}
-
 function parseConfigPatch(body: unknown): Partial<Config> | string {
   if (typeof body !== 'object' || body === null) return 'Expected a JSON object';
   const { parts, areas, intervalSeconds, paused, alarm } = body as Record<string, unknown>;
   const patch: Partial<Config> = {};
 
   if (parts !== undefined) {
-    if (!Array.isArray(parts) || !parts.every((p) => typeof p === 'string' && isKnownPart(p))) {
-      return 'parts must be a list of known iPhone Duo part numbers';
-    }
-    patch.parts = [...new Set(parts as string[])];
+    const parsed = parseParts(parts);
+    if (typeof parsed === 'string') return parsed;
+    patch.parts = parsed;
   }
   if (areas !== undefined) {
     const parsed = parseAreas(areas);
@@ -80,26 +79,46 @@ function parseConfigPatch(body: unknown): Partial<Config> | string {
 
 export default {
   async fetch(req, env, ctx) {
-    if (!authorised(req, env)) return json({ error: 'Unauthorised' }, 401);
+    const role = roleOf(req, env);
+    if (!role) return json({ error: 'Unauthorised' }, 401);
+    const header = req.headers.get('x-device-id');
+    if (header !== null && !DEVICE_ID.test(header)) return json({ error: 'x-device-id must be a UUID' }, 400);
+    const deviceId = header?.toLowerCase();
+    const route = `${req.method} ${new URL(req.url).pathname}`;
+    if (role === 'friend' && (route === 'PUT /config' || route === 'POST /check')) return json({ error: 'Only the owner can do that' }, 403);
+    // Without ids, phones can't be told apart, so a friend's app has to send one.
+    if (role === 'friend' && !deviceId && route !== 'GET /status') return json({ error: 'x-device-id is required' }, 400);
 
     const stub = checker(env);
-    switch (`${req.method} ${new URL(req.url).pathname}`) {
+    // As the phone asking sees it.
+    const status = async () => json({ ...(await stub.status(deviceId)), role });
+    switch (route) {
       case 'GET /status':
-        return json(await stub.status());
+        return status();
 
       case 'POST /devices': {
         // The iPhone app sends no platform.
         const { token, platform = 'ios', environment } = (await req.json().catch(() => ({}))) as Record<string, unknown>;
         if (platform === 'android') {
           if (typeof token !== 'string' || !/^[\w:-]{20,4096}$/.test(token)) return json({ error: 'token must be an FCM registration token' }, 400);
-          await stub.registerDevice({ platform, token });
-          return json(await stub.status());
+          await stub.registerDevice({ platform, token }, deviceId);
+          return status();
         }
         if (platform !== 'ios') return json({ error: 'platform must be ios or android' }, 400);
         if (typeof token !== 'string' || !/^[0-9a-f]{64,200}$/i.test(token)) return json({ error: 'token must be a hex APNs device token' }, 400);
         if (environment !== 'sandbox' && environment !== 'production') return json({ error: 'environment must be sandbox or production' }, 400);
-        await stub.registerDevice({ platform, token: token.toLowerCase(), environment });
-        return json(await stub.status());
+        await stub.registerDevice({ platform, token: token.toLowerCase(), environment }, deviceId);
+        return status();
+      }
+
+      // This phone's own models, alarm, areas and mute.
+      case 'PUT /device': {
+        if (!deviceId) return json({ error: 'x-device-id is required' }, 400);
+        const patch = parsePrefsPatch(await req.json().catch(() => null));
+        if (typeof patch === 'string') return json({ error: patch }, 400);
+        const failure = await stub.updateDevice(deviceId, patch);
+        if (failure) return json({ error: failure.error }, failure.status);
+        return status();
       }
 
       case 'PUT /config': {
@@ -108,11 +127,11 @@ export default {
         // Apple is asked about any new area first, so a search that finds the wrong stores is refused.
         const error = await stub.updateConfig(patch);
         if (error) return json({ error }, 400);
-        return json(await stub.status());
+        return status();
       }
 
       case 'POST /check':
-        return json(await stub.checkNow());
+        return json({ ...(await stub.checkNow(deviceId)), role });
 
       case 'POST /test-notification': {
         const { alarm = false, delaySeconds = 0 } = (await req.json().catch(() => ({}))) as Record<string, unknown>;
@@ -120,9 +139,9 @@ export default {
         if (!Number.isInteger(delaySeconds) || (delaySeconds as number) < 0 || (delaySeconds as number) > 20) {
           return json({ error: 'delaySeconds must be a whole number between 0 and 20' }, 400);
         }
-        if (delaySeconds === 0) return json(await stub.sendTest(alarm));
+        if (delaySeconds === 0) return json(await stub.sendTest(alarm, deviceId));
         // Sent after answering, so there's time to lock the phone first.
-        ctx.waitUntil(scheduler.wait((delaySeconds as number) * 1000).then(() => stub.sendTest(alarm)));
+        ctx.waitUntil(scheduler.wait((delaySeconds as number) * 1000).then(() => stub.sendTest(alarm, deviceId)));
         return json({ delivered: false, errors: [], sendsAt: new Date(Date.now() + (delaySeconds as number) * 1000).toISOString() }, 202);
       }
 

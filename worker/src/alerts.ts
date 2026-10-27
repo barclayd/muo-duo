@@ -23,7 +23,9 @@ export interface AlarmWindow {
   to: number;
 }
 
-const ukHour = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: 'numeric', hourCycle: 'h23' });
+export const DEFAULT_ALARM: AlarmWindow = { enabled: true, from: 6, to: 8 };
+
+const ukHour =new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: 'numeric', hourCycle: 'h23' });
 
 export function inAlarmWindow(alarm: AlarmWindow, now: Date) {
   const hour = Number(ukHour.format(now));
