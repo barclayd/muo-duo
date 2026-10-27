@@ -29,7 +29,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
  */
 object Push {
     private const val STOCK = "stock"
-    private const val HEALTH = "health"
     private const val ALARM = "alarm"
     private const val ALARM_ID = 1
 
@@ -78,9 +77,6 @@ object Push {
         val stock = NotificationChannel(STOCK, "Stock alerts", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "iPhone Duo found in a store near you"
         }
-        val health = NotificationChannel(HEALTH, "Checker health", NotificationManager.IMPORTANCE_DEFAULT).apply {
-            description = "When Apple slows the checker down, and when it recovers"
-        }
         val alarm = NotificationChannel(ALARM, "Stock alarm", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "Stock found in your alarm hours, ringing through silent mode"
             setSound(
@@ -94,21 +90,22 @@ object Push {
             vibrationPattern = longArrayOf(0, 800, 400, 800)
             setBypassDnd(true)
         }
-        context.getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(stock, health, alarm))
+        manager(context).createNotificationChannels(listOf(stock, alarm))
+        // The checker's health is shown in the app now, never pushed, so its old channel goes.
+        manager(context).deleteNotificationChannel("health")
     }
 
     fun show(context: Context, data: Map<String, String>) {
         val title = data["title"] ?: return
         val body = data["body"].orEmpty()
         val url = data["url"]
-        val health = data["thread"] == HEALTH
-        val notification = NotificationCompat.Builder(context, if (health) HEALTH else STOCK)
+        val notification = NotificationCompat.Builder(context, STOCK)
             .setSmallIcon(R.drawable.ic_stat_muoduo)
             .setColor(GREEN)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(if (health) NotificationCompat.PRIORITY_DEFAULT else NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setGroup(data["thread"])
             .setAutoCancel(true)
             .setContentIntent(open(context, url))

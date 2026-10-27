@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cycleSeconds, isPushback, MAX_INTERVAL_SECONDS, SPEED_UP_AFTER_MS, shouldAlertSlowdown, slowDown, speedUp, tickDelaySeconds } from '../src/pace';
+import { cycleSeconds, isPushback, MAX_INTERVAL_SECONDS, SPEED_UP_AFTER_MS, slowDown, speedUp, tickDelaySeconds } from '../src/pace';
 
 const atTarget = { intervalSeconds: 20, changedAt: 0 };
 
@@ -27,22 +27,6 @@ describe('slowDown', () => {
   test('stops at the maximum', () => {
     expect(slowDown({ intervalSeconds: 600, changedAt: 0 }, 20, 'HTTP 429', 0).intervalSeconds).toBe(MAX_INTERVAL_SECONDS);
   });
-
-  test('remembers that the slow-down was announced', () => {
-    expect(slowDown({ intervalSeconds: 40, changedAt: 0, alerted: true }, 20, 'HTTP 429', 0).alerted).toBe(true);
-  });
-});
-
-describe('shouldAlertSlowdown', () => {
-  test('stays quiet for one slow-down, and speaks up at the second', () => {
-    const once = slowDown(atTarget, 20, 'HTTP 429', 0);
-    expect(shouldAlertSlowdown(once, 20)).toBe(false);
-    expect(shouldAlertSlowdown(slowDown(once, 20, 'HTTP 429', 0), 20)).toBe(true);
-  });
-
-  test('only speaks up once', () => {
-    expect(shouldAlertSlowdown({ intervalSeconds: 160, changedAt: 0, alerted: true }, 20)).toBe(false);
-  });
 });
 
 describe('speedUp', () => {
@@ -57,7 +41,7 @@ describe('speedUp', () => {
   });
 
   test('never goes faster than the target, and forgets the slow-down once back at it', () => {
-    expect(speedUp({ ...slowed, intervalSeconds: 30, alerted: true }, 20, SPEED_UP_AFTER_MS)).toStrictEqual({ intervalSeconds: 20, changedAt: SPEED_UP_AFTER_MS });
+    expect(speedUp({ ...slowed, intervalSeconds: 30 }, 20, SPEED_UP_AFTER_MS)).toStrictEqual({ intervalSeconds: 20, changedAt: SPEED_UP_AFTER_MS });
     expect(speedUp(atTarget, 20, SPEED_UP_AFTER_MS)).toBe(atTarget);
   });
 });

@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { type AlarmWindow, currentSightings, DEFAULT_ALARM, healthAlert, newSightings, stockAlert, testAlert } from './alerts';
+import { type AlarmWindow, currentSightings, DEFAULT_ALARM, newSightings, stockAlert, testAlert } from './alerts';
 import { Apns, type ProviderToken } from './apns';
 import { AppleError, fetchPickup, fetchStores, forToday, type Sighting, type Store } from './apple';
 import { type Area, DEFAULT_AREAS, DEFAULT_PARTS, imageUrl, MODELS, productUrl } from './catalog';
@@ -7,7 +7,7 @@ import { applyPatch, type Device, everyone, type PrefsPatch, prefsOf, type Query
 import { Fcm, parseServiceAccount } from './fcm';
 import { type Episode, recordSeen } from './history';
 import { type CheckerNote, emptyLog, note, recordStock, type StockLog } from './log';
-import { cycleSeconds, isPushback, MIN_SECONDS_BETWEEN_REQUESTS, type Pace, shouldAlertSlowdown, slowDown, speedUp, tickDelaySeconds } from './pace';
+import { cycleSeconds, isPushback, MIN_SECONDS_BETWEEN_REQUESTS, type Pace, slowDown, speedUp, tickDelaySeconds } from './pace';
 import type { PushResult } from './push';
 import { answered, asked, CONFIRM_TIMEOUT_MS, confirmDue, emptySweeps, failed, outdate, resting, SWEEP_EVERY_MS, SWEEP_TIMEOUT_MS, standing, sweepDue, type Sweeps } from './sweep';
 
@@ -25,10 +25,8 @@ export interface Health {
   lastSuccessAt?: string;
   lastError?: string;
   consecutiveFailures: number;
-  unhealthyAlerted: boolean;
   lastCanaryAt?: string;
   canaryMisses: number;
-  staleAlerted: boolean;
 }
 
 // When each query was last asked, its last good answer (stores in its area only), and any of the
@@ -335,13 +333,8 @@ export class Checker extends DurableObject<Env> {
       const canaryDue = !health.lastCanaryAt || Date.now() - Date.parse(health.lastCanaryAt) >= CANARY_INTERVAL_MS;
       if (canaryDue) await this.canary(config, health, logNote);
 
-      if (health.unhealthyAlerted) await this.notify(healthAlert('Stock checker recovered', 'Apple is responding again.'));
-      Object.assign(health, { lastSuccessAt: health.lastCheckAt, lastError: undefined, consecutiveFailures: 0, unhealthyAlerted: false });
+      Object.assign(health, { lastSuccessAt: health.lastCheckAt, lastError: undefined, consecutiveFailures: 0 });
       pace = speedUp(pace, config.intervalSeconds, Date.now());
-      if (startingPace.alerted && pace.intervalSeconds <= config.intervalSeconds) {
-        const every = cycleSeconds(config.intervalSeconds, queries.length);
-        await this.notify(healthAlert('Back to full speed', `Checks are every ${every}s again.`));
-      }
       const missing = tick.batch.flatMap((q) => results[q.key]?.missing ?? []);
       const confirmed = confirming.map((a) => a.name);
       console.log(JSON.stringify({ event: 'check', ok: true, queries: tick.batch.map((q) => q.key), ms: Date.now() - started, inStock: current.length, fresh: fresh.length, confirmed, delivered, missing, canaryMisses: health.canaryMisses, intervalSeconds: pace.intervalSeconds }));
@@ -358,19 +351,7 @@ export class Checker extends DurableObject<Env> {
       if (asking) this.logCheck(asking.query.area, asking.query.part, false, asking.at);
       console.error(JSON.stringify({ event: 'check', ok: false, queries: tick.batch.map((q) => q.key), ms: Date.now() - started, failures: health.consecutiveFailures, error: health.lastError }));
 
-      if (error instanceof AppleError && isPushback(error.status, health.consecutiveFailures)) {
-        pace = slowDown(pace, config.intervalSeconds, health.lastError, Date.now());
-        if (shouldAlertSlowdown(pace, config.intervalSeconds)) {
-          const every = cycleSeconds(pace.intervalSeconds, queries.length);
-          const body = `${health.lastError}, so checks are now every ${every}s. They speed back up after 2 minutes without pushback.`;
-          pace = { ...pace, alerted: (await this.notify(healthAlert('Checking less often', body))).delivered };
-        }
-      }
-
-      if (health.consecutiveFailures >= FAILURES_BEFORE_ALERT && !health.unhealthyAlerted) {
-        const body = `${health.consecutiveFailures} checks in a row failed. Last error: ${health.lastError}`;
-        health.unhealthyAlerted = (await this.notify(healthAlert('Stock checker is failing', body))).delivered;
-      }
+      if (error instanceof AppleError && isPushback(error.status, health.consecutiveFailures)) pace = slowDown(pace, config.intervalSeconds, health.lastError, Date.now());
     } finally {
       const writes: Record<string, unknown> = { health, results };
       if (storesChanged) writes.stores = stores;
@@ -420,20 +401,6 @@ export class Checker extends DurableObject<Env> {
     if (seen && health.canaryMisses >= CANARY_MISSES_BEFORE_ALERT) logNote({ kind: 'normal' });
     health.canaryMisses = seen ? 0 : health.canaryMisses + 1;
     if (health.canaryMisses === CANARY_MISSES_BEFORE_ALERT) logNote({ kind: 'stale', detail: area.name });
-
-    if (seen && health.staleAlerted) {
-      await this.notify(healthAlert('Stock results look normal again', 'Apple is returning stock data again.'));
-      health.staleAlerted = false;
-    } else if (!seen && health.canaryMisses >= CANARY_MISSES_BEFORE_ALERT && !health.staleAlerted) {
-      const body = `Apple is answering, but even iPhone 17 shows no stock around ${area.name}, so "nothing in stock" may be wrong.`;
-      health.staleAlerted = (await this.notify(healthAlert('Stock results may be stale', body))).delivered;
-    }
-  }
-
-  // Tells every phone that isn't muted.
-  private async notify(payload: object) {
-    const devices = (await this.devices()).filter((d) => !d.prefs?.muted);
-    return this.deliver(devices.map((device) => ({ device, payload })));
   }
 
   private async deliver(messages: readonly { device: Device; payload: object }[]) {
@@ -504,8 +471,11 @@ export class Checker extends DurableObject<Env> {
   }
 
   private async health(): Promise<Health> {
-    const defaults: Health = { consecutiveFailures: 0, unhealthyAlerted: false, canaryMisses: 0, staleAlerted: false };
-    return { ...defaults, ...(await this.ctx.storage.get<Partial<Health>>('health')) };
+    // While the checker's health was pushed, it kept whether each problem had been. Those are dropped.
+    type Stored = Partial<Health> & { unhealthyAlerted?: boolean; staleAlerted?: boolean };
+    const { unhealthyAlerted: _, staleAlerted: __, ...stored } = (await this.ctx.storage.get<Stored>('health')) ?? {};
+    const defaults: Health = { consecutiveFailures: 0, canaryMisses: 0 };
+    return { ...defaults, ...stored };
   }
 
   private async pace(config: Config): Promise<Pace> {

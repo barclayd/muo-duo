@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test';
-import { healthAlert, stockAlert, testAlert } from '../src/alerts';
+import { stockAlert, testAlert } from '../src/alerts';
 import type { Sighting } from '../src/apple';
 import { Fcm, type FcmDevice, fcmData, parseServiceAccount, type ServiceAccount, signJwt } from '../src/fcm';
 
@@ -76,11 +76,6 @@ describe('fcmData', () => {
   test("leaves out what an alert doesn't have", () => {
     expect(fcmData(stockAlert([whiteCity]))).not.toHaveProperty('alarm');
     expect(fcmData(testAlert(false))).toEqual({ title: 'Muo Duo', body: "Test notification: you're all set." });
-    expect(fcmData(healthAlert('Stock results may be stale', 'Apple is answering.'))).toEqual({
-      title: 'Stock results may be stale',
-      body: 'Apple is answering.',
-      thread: 'health',
-    });
   });
 });
 

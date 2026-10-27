@@ -5,8 +5,6 @@ export interface Pace {
   intervalSeconds: number;
   changedAt: number;
   reason?: string;
-  // Whether "Checking less often" went out, so "Back to full speed" only ever follows one.
-  alerted?: boolean;
 }
 
 // 429 and 541 (Apple's bot shield) mean slow down, and 403 can be a block. A 503 is usually a passing
@@ -20,7 +18,7 @@ export const isPushback = (status: number | undefined, consecutiveFailures: numb
 
 export function slowDown(pace: Pace, targetSeconds: number, reason: string, now: number): Pace {
   const intervalSeconds = Math.min(Math.max(pace.intervalSeconds, targetSeconds) * 2, MAX_INTERVAL_SECONDS);
-  return { intervalSeconds, changedAt: now, reason, alerted: pace.alerted };
+  return { intervalSeconds, changedAt: now, reason };
 }
 
 export function speedUp(pace: Pace, targetSeconds: number, now: number): Pace {
@@ -28,9 +26,6 @@ export function speedUp(pace: Pace, targetSeconds: number, now: number): Pace {
   const intervalSeconds = Math.max(targetSeconds, Math.ceil(pace.intervalSeconds / 2));
   return intervalSeconds > targetSeconds ? { ...pace, intervalSeconds, changedAt: now } : { intervalSeconds, changedAt: now };
 }
-
-// One slow-down sorts itself out in a couple of minutes, so only a second in a row is worth a push.
-export const shouldAlertSlowdown = (pace: Pace, targetSeconds: number) => !pace.alerted && pace.intervalSeconds >= targetSeconds * 4;
 
 // A ceiling on what Apple sees, however many areas and models are watched.
 export const MIN_SECONDS_BETWEEN_REQUESTS = 1;
