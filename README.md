@@ -66,7 +66,7 @@ Only stock Apple quotes as "Available Today" counts, so you're never woken for s
 <td valign="top">
 
 **🗺️ 20 stores, 3 areas**<br>
-London, the south of England and Manchester, on a map. Every five minutes, one area is swept for every store that has stock, not just the nearest.
+London, the south of England and Manchester, on a map. Once a minute, one area is swept for every store that has stock, not just the nearest.
 
 </td>
 <td valign="top">
@@ -112,7 +112,7 @@ Glass cards over a slowly drifting sky that takes the look of the colour you pic
 flowchart TD
     tick["⏱️ Durable Object alarm<br>one request to Apple a second"]
     quick["⚡ Quick check<br>pickup-message-recommendations<br>one model, one area, names one store"]
-    sweep["🧹 Sweep, every 5 minutes<br>retail/pickup-message<br>every model at every store in an area"]
+    sweep["🧹 Sweep, once a minute<br>retail/pickup-message<br>every model at every store in an area"]
     confirm["🧹 Confirming sweep<br>every store that has it, 2s at most"]
     push["🔔 Time-sensitive push<br>through APNs and FCM"]
     phone["📱 iPhone or Android phone"]
@@ -120,7 +120,7 @@ flowchart TD
     app["📱 Muo Duo app"]
 
     tick --> quick
-    tick -->|"instead, every 5 minutes"| sweep
+    tick -->|"instead, once a minute"| sweep
     quick -->|"new stock today"| confirm
     confirm --> push
     sweep -->|"new stock today"| push
@@ -151,7 +151,7 @@ Each area lists its store numbers, and answers are filtered to them, so a far-of
 - **Endpoints.** Apple's `fulfillment-messages` endpoint sits behind a bot shield (HTTP 541 without a browser session), so it isn't used. Two others are open:
   - `pickup-message-recommendations` is quick and does most of the checking. For the part asked about, it lists the *other* colours at the same capacity that are in stock near the search; the queried part itself never appears. So the checker queries every colour at each watched capacity and keeps any watched part that comes back. It only ever names one store with stock, however many have it.
   - `retail/pickup-message` answers for every watched part at all 12 stores nearest the search in one go, so it finds every store with stock. It's slower, and Apple is warier of it: it sometimes answers with the 541 bot shield. So it's asked less often, in a sweep.
-- **Sweeps.** Every five minutes an alarm sweeps one area instead of asking its quick query, taking turns, so each area is swept every 15 minutes. Sweeping once a minute got the sweeps turned away (541) after about a quarter of an hour, for 20 minutes at a time, and the sweep that confirms new stock with them. And when a quick check finds new stock, its area is swept before the push goes out, so the alert names every store that has it. That sweep gets 2 seconds; if Apple's slower, the alert goes without it. Stock is the quick checks' latest answers plus each area's last sweep. A sweep stops counting after 20 minutes, and when a quick check finds none of a capacity's other colours anywhere near an area, what the area's last sweep found of them goes straight away. Neither source can cancel stock the other has found, so a disagreement errs towards alerting.
+- **Sweeps.** Once a minute an alarm sweeps one area instead of asking its quick query, taking turns, so each area is swept every 3 minutes. Sweeping every 5 minutes instead was tried: Apple's bot shield (541) still turned sweeps away in waves of about an hour, and fewer of them got through. And when a quick check finds new stock, its area is swept before the push goes out, so the alert names every store that has it. That sweep gets 2 seconds; if Apple's slower, the alert goes without it. Stock is the quick checks' latest answers plus each area's last sweep. A sweep stops counting after 5 minutes, and when a quick check finds none of a capacity's other colours anywhere near an area, what the area's last sweep found of them goes straight away. Neither source can cancel stock the other has found, so a disagreement errs towards alerting.
 - **Today only.** Only stock Apple quotes as "Available Today" is alerted on or logged. Once the stores close, Apple quotes everything for tomorrow, so in the evening nothing counts until the next day.
 - **Alarm hours.** Restocks tend to land first thing, so the hours start as 06:00 to 08:00 UK time, and each phone can change its own in Settings. Stock found in those hours also rings an alarm: the push goes through the app's notification service extension, which schedules an [AlarmKit](https://developer.apple.com/documentation/alarmkit) alarm a second later, sounding through silent mode and Focus like the Clock app's. Only one rings at a time. If it can't ring, the notification says why. Apple doesn't document scheduling alarms from a notification service extension, so test it from Settings.
 - **Postcodes, not towns.** Apple's search takes town names too, but not reliably: "Manchester" and "Exeter" work, "Brighton" returns no stores, "Brighton and Hove" is rejected, and "Dorchester" picks Dorchester-on-Thames in Oxfordshire. `PUT /config` test-runs every new search against Apple and refuses one that fails or misses any of its listed stores.

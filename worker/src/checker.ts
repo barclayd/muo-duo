@@ -69,7 +69,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 
 // Single instance that polls Apple on a self-rescheduling alarm and pushes to registered devices.
 // Each alarm asks about one model in one area, taking turns, so requests are spread evenly and stock
-// is pushed as soon as any one answer shows it. Every five minutes an alarm sweeps an area's stores instead
+// is pushed as soon as any one answer shows it. Once a minute an alarm sweeps an area's stores instead
 // (see sweep.ts). A tick usually writes only its answer, health and the next alarm, three storage
 // rows, so even at one request a second this stays well inside the paid plan's 50 million writes a month.
 // Each phone picks its own models, areas and alarm hours (see devices.ts). Apple is asked about
