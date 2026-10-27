@@ -6,9 +6,13 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// The Worker's URL and token, and the Firebase app, from secrets.properties (gitignored).
+// The Worker's URL and token, and the Firebase app, from secrets.properties (gitignored). A friend's build
+// reads its own file instead, with -Psecrets=secrets.friend.properties.
 val secrets = Properties().apply {
-    rootProject.file("secrets.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
+    val chosen = providers.gradleProperty("secrets").orNull
+    val file = rootProject.file(chosen ?: "secrets.properties")
+    check(chosen == null || file.exists()) { "$chosen not found" }
+    file.takeIf { it.exists() }?.inputStream()?.use(::load)
 }
 
 fun secret(key: String) = "\"${secrets.getProperty(key, "").trim()}\""
