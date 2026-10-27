@@ -260,7 +260,15 @@ The Firebase values are in `google-services.json`: `project_id`, `mobilesdk_app_
 
 The release build is signed with your machine's debug key, which is enough to install it yourself. Allow notifications when it asks, then use **Settings → Send test notification**.
 
-For a friend's phone, copy `secrets.properties` to `secrets.friend.properties` (also gitignored), put the `FRIEND_API_TOKEN` in its `MUODUO_API_TOKEN`, and build with `./gradlew assembleRelease -Psecrets=secrets.friend.properties`. Their phone chooses its own settings and can't pause checking. The key is inside the APK, so send it to them directly rather than posting it anywhere.
+For a friend's phone, copy `secrets.properties` to `secrets.friend.properties` (also gitignored), put the `FRIEND_API_TOKEN` in its `MUODUO_API_TOKEN`, and build with `./gradlew assembleRelease -Psecrets=secrets.friend.properties`. Their phone chooses its own settings and can't pause checking. The key is inside the APK, so share it privately rather than posting it anywhere. Firebase App Distribution does this: it emails them an invite, and they install the app through its App Tester app.
+
+```sh
+npx firebase-tools login
+npx firebase-tools appdistribution:distribute app/build/outputs/apk/release/app-release.apk \
+  --app <FIREBASE_APP_ID> --testers friend@example.com --release-notes "What's new"
+```
+
+A new version needs a higher `versionCode` in `app/build.gradle.kts`. Build it on the same machine as before: the APK is signed with that machine's debug key, and Android won't install an update signed with a different key.
 
 Android has no AlarmKit, so the alarm is a notification on its own channel that rings on the alarm volume until it's stopped, and takes over the lock screen as the Clock app's alarm does. Do Not Disturb lets it through, unless you've turned off alarms there. Android 14 and later can turn off an app's full-screen alerts; if it has, **Settings** in the app says so and opens the switch. Plain stock alerts don't break through Do Not Disturb on their own: to let them, add Muo Duo to its exceptions.
 
