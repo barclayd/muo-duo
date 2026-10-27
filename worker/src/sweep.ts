@@ -2,8 +2,8 @@ import type { Sighting } from './apple';
 import { findModel } from './catalog';
 
 // Sweeps ask the older pickup-message endpoint, which lists every watched model at all 12 stores near an
-// area in one answer, where a quick check's recommendations name a single store. One area is swept a
-// minute, taking turns, and an area is swept straight away when a quick check finds new stock there, so
+// area in one answer, where a quick check's recommendations name a single store. One area is swept every
+// five minutes, taking turns, and an area is swept straight away when a quick check finds new stock there, so
 // the alert names every store that has it. Apple is warier of this endpoint, so when it pushes back,
 // sweeps stop for a while and the quick checks carry on without them.
 //
@@ -42,18 +42,21 @@ export interface Failure {
   retryAfterMs?: number;
 }
 
-export const SWEEP_EVERY_MS = 60_000;
+// A sweep a minute was turned away (541) after about a quarter of an hour, for 20 minutes at a time, and
+// the sweep that confirms new stock with it. Sweeping less often leaves Apple's patience for that one.
+export const SWEEP_EVERY_MS = 5 * 60_000;
 // New stock in an area sweeps it again, unless it was swept this recently.
 export const CONFIRM_GAP_MS = 30_000;
 // How long new stock waits for the sweep before it's alerted on without it.
 export const CONFIRM_TIMEOUT_MS = 2_000;
 export const SWEEP_TIMEOUT_MS = 10_000;
-// Each area is normally swept every few minutes. One that hasn't been for this long no longer counts.
-export const SWEEP_TRUSTED_MS = 5 * 60_000;
+// With three areas taking turns, each is normally swept every 15 minutes. One that hasn't been for this
+// long no longer counts.
+export const SWEEP_TRUSTED_MS = 20 * 60_000;
 const PAUSES_MS = [5, 10, 20, 30].map((minutes) => minutes * 60_000);
 // Retry-After is honoured up to an hour, so a stray one can't stop sweeps for days.
 const LONGEST_WAIT_MS = 60 * 60_000;
-// About an hour of sweeps.
+// About five hours of sweeps.
 const RECENT_SWEEPS = 60;
 
 export const emptySweeps = (): Sweeps => ({ answers: {}, askedAt: {}, rests: {}, turnedAway: [], pushbacks: 0, recent: [] });
@@ -66,7 +69,7 @@ export const resting = (sweeps: Sweeps, area: string, now: number) => now < (swe
 
 const askedAt = (sweeps: Sweeps, area: string) => sweeps.askedAt[area] ?? -Infinity;
 
-// The area asked about longest ago that isn't resting, once a minute has passed since the last sweep.
+// The area asked about longest ago that isn't resting, once five minutes have passed since the last sweep.
 export function sweepDue<A extends { search: string }>(sweeps: Sweeps, areas: readonly A[], now: number): A | undefined {
   if (paused(sweeps, now)) return undefined;
   if (now - Math.max(-Infinity, ...Object.values(sweeps.askedAt)) < SWEEP_EVERY_MS) return undefined;
