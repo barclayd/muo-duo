@@ -88,10 +88,17 @@ export default {
         return json(await stub.status());
 
       case 'POST /devices': {
-        const { token, environment } = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+        // The iPhone app sends no platform.
+        const { token, platform = 'ios', environment } = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+        if (platform === 'android') {
+          if (typeof token !== 'string' || !/^[\w:-]{20,4096}$/.test(token)) return json({ error: 'token must be an FCM registration token' }, 400);
+          await stub.registerDevice({ platform, token });
+          return json(await stub.status());
+        }
+        if (platform !== 'ios') return json({ error: 'platform must be ios or android' }, 400);
         if (typeof token !== 'string' || !/^[0-9a-f]{64,200}$/i.test(token)) return json({ error: 'token must be a hex APNs device token' }, 400);
         if (environment !== 'sandbox' && environment !== 'production') return json({ error: 'environment must be sandbox or production' }, 400);
-        await stub.registerDevice(token.toLowerCase(), environment);
+        await stub.registerDevice({ platform, token: token.toLowerCase(), environment });
         return json(await stub.status());
       }
 

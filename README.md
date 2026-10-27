@@ -27,7 +27,7 @@ It comes in three parts:
 
 | | |
 | --- | --- |
-| ☁️ **[`worker/`](worker)** | A Cloudflare Worker with one Durable Object. It does all the checking, polling two of Apple's pickup endpoints one request a second, and sends the pushes through APNs. |
+| ☁️ **[`worker/`](worker)** | A Cloudflare Worker with one Durable Object. It does all the checking, polling two of Apple's pickup endpoints one request a second, and sends the pushes, through APNs to iPhones and Firebase Cloud Messaging to Android phones. |
 | 📱 **[`ios/`](ios)** | A SwiftUI app with a Liquid Glass design. It shows the checker working live, where and when an iPhone Duo was last in stock, a map of the stores, and which models alert you. |
 | 🤖 **[`android/`](android)** | The same app for Android 12 and later, in Kotlin with Jetpack Compose: the same screens, and the same glass over the same sky. |
 
@@ -114,9 +114,9 @@ flowchart TD
     quick["⚡ Quick check<br>pickup-message-recommendations<br>one model, one area, names one store"]
     sweep["🧹 Sweep, once a minute<br>retail/pickup-message<br>every model at every store in an area"]
     confirm["🧹 Confirming sweep<br>every store that has it, 2s at most"]
-    push["🔔 Time-sensitive push<br>through APNs"]
-    phone["📱 iPhone"]
-    ring["⏰ AlarmKit alarm"]
+    push["🔔 Time-sensitive push<br>through APNs and FCM"]
+    phone["📱 iPhone or Android phone"]
+    ring["⏰ Alarm, even on silent"]
     app["📱 Muo Duo app"]
 
     tick --> quick
@@ -188,13 +188,19 @@ The Worker does all the checking; the app only watches it, polling `/status` eve
 ## Run your own
 
 > [!NOTE]
-> You'll need an Apple Developer account (push notifications and alarms need a real iPhone and signing), a Cloudflare account on the Workers Paid plan, [Bun](https://bun.sh) and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+> You'll need an Apple Developer account (push notifications and alarms need a real iPhone and signing), a Cloudflare account on the Workers Paid plan, [Bun](https://bun.sh) and [XcodeGen](https://github.com/yonaskolb/XcodeGen). The Android app also needs a free Firebase project.
 
 ### 1. 🔑 APNs key
 
 In [Certificates, Identifiers & Profiles → Keys](https://developer.apple.com/account/resources/authkeys/list), create a key with **Apple Push Notifications service (APNs)** enabled. Download the `.p8` and note its Key ID. Keep the `.p8` out of this repo (`*.p8` is gitignored).
 
-### 2. ☁️ Worker
+### 2. 🔥 Firebase project
+
+Only for the Android app. In the [Firebase console](https://console.firebase.google.com/), create a project and add an Android app to it with the package name `com.barclayd.muoduo`. Download the `google-services.json` it offers: the app takes four values from it in step 5.
+
+Then in **Project settings → Service accounts**, choose **Generate new private key**. The Worker sends through Firebase with this key. Keep it out of this repo (`*firebase-adminsdk*.json` is gitignored), and delete it once it's in the Worker.
+
+### 3. ☁️ Worker
 
 ```sh
 cd worker
@@ -202,6 +208,7 @@ bun install
 bunx wrangler secret put APNS_KEY < ~/Downloads/AuthKey_XXXXXXXXXX.p8
 bunx wrangler secret put APNS_KEY_ID          # the 10-character Key ID
 openssl rand -hex 32 | tee /dev/tty | bunx wrangler secret put API_TOKEN   # keep this for the app
+bunx wrangler secret put FCM_SERVICE_ACCOUNT < ~/Downloads/<project>-firebase-adminsdk-<id>.json   # for Android
 bunx wrangler deploy
 ```
 
@@ -214,7 +221,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" https://muo-duo.barclaysd.work
 
 `consecutiveFailures: 0` and a `lastSuccessAt` mean it's working. Follow live logs with `bunx wrangler tail`.
 
-### 3. 📱 iOS app
+### 4. 📱 iOS app
 
 ```sh
 cd ios
@@ -225,7 +232,7 @@ open MuoDuo.xcodeproj
 
 Run it on your iPhone, allow notifications, then use **Settings → Send test notification**. If iOS asks, allow **Time Sensitive** notifications so alerts break through Focus modes, and allow alarms. Then use **Settings → Test Alarm** and lock the phone.
 
-### 4. 🤖 Android app
+### 5. 🤖 Android app
 
 You'll need JDK 21 and the Android SDK. [Android Studio](https://developer.android.com/studio) brings both, or without it:
 
@@ -239,12 +246,14 @@ Then build it and install it on your phone over USB, with [USB debugging](https:
 
 ```sh
 cd android
-cp secrets.example.properties secrets.properties   # paste the API_TOKEN in
+cp secrets.example.properties secrets.properties   # paste the API_TOKEN and Firebase values in
 ./gradlew assembleRelease
 adb install app/build/outputs/apk/release/app-release.apk
 ```
 
-The release build is signed with your machine's debug key, which is enough to install it yourself. Allow notifications when it asks.
+The Firebase values are in `google-services.json`: `project_id`, `mobilesdk_app_id`, `current_key` (the API key) and `project_number` (the sender ID). The app reads them from `secrets.properties` rather than the file, so they stay out of the repo.
+
+The release build is signed with your machine's debug key, which is enough to install it yourself. Allow notifications when it asks, then use **Settings → Send test notification**.
 
 Android has no AlarmKit, so the alarm is a notification on its own channel that rings on the alarm volume until it's stopped, and takes over the lock screen as the Clock app's alarm does. Do Not Disturb lets it through, unless you've turned off alarms there. Android 14 and later can turn off an app's full-screen alerts; if it has, **Settings** in the app says so and opens the switch. Plain stock alerts don't break through Do Not Disturb on their own: to let them, add Muo Duo to its exceptions.
 
@@ -255,7 +264,7 @@ All routes need `Authorization: Bearer <API_TOKEN>`.
 | Route | What it does |
 | --- | --- |
 | `GET /status` | Config, health, pace, sweeps, current sightings, areas with their stores (name, city, coordinates, covered), `lastSeen`, `trackingSince`, `log`, `loggingSince`, `recentChecks`, device count, next check time, models with product and image URLs |
-| `POST /devices` | `{ "token": "<hex>", "environment": "sandbox" \| "production" }` |
+| `POST /devices` | From the iPhone, `{ "token": "<hex>", "environment": "sandbox" \| "production" }`. From Android, `{ "token": "<FCM token>", "platform": "android" }`. |
 | `PUT /config` | Any of `{ "parts": [...], "areas": [{ "name", "search", "stores": ["R092", ...] }], "intervalSeconds": 10–3600, "paused": bool, "alarm": { "enabled": bool, "from": 0–24, "to": 0–24 } }`. Up to 6 areas of up to 12 stores each; new searches are checked against Apple first. Alarm hours are UK time, from included, to not. |
 | `POST /check` | Run a check now and return the status |
 | `POST /test-notification` | Push a test alert to every registered device. `{ "alarm": true }` rings an alarm too; `"delaySeconds": 0–20` sends it that much later. |

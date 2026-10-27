@@ -30,5 +30,6 @@ android/**/build/
 android/.idea/
 *.keystore
 *.jks
-# Firebase service account for the Worker's FCM secret
+# Firebase service account for the Worker's FCM secret, as Firebase names it or otherwise
 *service-account*.json
+*firebase-adminsdk*.json

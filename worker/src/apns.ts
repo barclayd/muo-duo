@@ -1,4 +1,8 @@
-export interface Device {
+import { base64url, encodeJson, pemToDer, type PushResult } from './push';
+
+// Devices registered before the Android app have no platform: they're all iPhones.
+export interface ApnsDevice {
+  platform?: 'ios';
   token: string;
   environment: 'sandbox' | 'production';
   registeredAt: string;
@@ -11,8 +15,6 @@ export interface ApnsConfig {
   topic: string;
 }
 
-export type ApnsResult = { ok: true } | { ok: false; status: number; reason: string; deviceGone: boolean };
-
 const HOSTS = {
   sandbox: 'https://api.sandbox.push.apple.com',
   production: 'https://api.push.apple.com',
@@ -23,18 +25,7 @@ const JWT_LIFETIME_MS = 50 * 60 * 1000;
 
 const GONE_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']);
 
-const base64url = (bytes: ArrayBuffer | Uint8Array) =>
-  btoa(String.fromCharCode(...new Uint8Array(bytes)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-
-const encodeJson = (value: object) => base64url(new TextEncoder().encode(JSON.stringify(value)));
-
-async function importP8(pem: string) {
-  const der = Uint8Array.from(atob(pem.replace(/-----[^-]+-----|\s/g, '')), (c) => c.charCodeAt(0));
-  return crypto.subtle.importKey('pkcs8', der, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
-}
+const importP8 = (pem: string) => crypto.subtle.importKey('pkcs8', pemToDer(pem), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
 
 export async function signJwt(config: Pick<ApnsConfig, 'keyP8' | 'keyId' | 'teamId'>, issuedAt: number) {
   const signingInput = `${encodeJson({ alg: 'ES256', kid: config.keyId })}.${encodeJson({ iss: config.teamId, iat: Math.floor(issuedAt / 1000) })}`;
@@ -60,7 +51,7 @@ export class Apns {
     return this.jwt.token;
   }
 
-  async send(device: Device, payload: object): Promise<ApnsResult> {
+  async send(device: ApnsDevice, payload: object): Promise<PushResult> {
     const res = await fetch(`${HOSTS[device.environment]}/3/device/${device.token}`, {
       method: 'POST',
       headers: {
