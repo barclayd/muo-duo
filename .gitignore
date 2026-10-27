@@ -22,6 +22,7 @@ build/
 
 # Android
 android/secrets.properties
+android/secrets.friend.properties
 android/app/google-services.json
 android/local.properties
 android/.gradle/
