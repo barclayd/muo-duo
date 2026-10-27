@@ -16,7 +16,25 @@ export function currentSightings(answers: readonly (readonly Sighting[])[], watc
   return [...found.values()];
 }
 
-export function stockAlert(sightings: readonly Sighting[]) {
+// Hours in the UK, like Apple's restocks, whatever the Worker's own clock says. From is included, to isn't.
+export interface AlarmWindow {
+  enabled: boolean;
+  from: number;
+  to: number;
+}
+
+const ukHour = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: 'numeric', hourCycle: 'h23' });
+
+export function inAlarmWindow(alarm: AlarmWindow, now: Date) {
+  const hour = Number(ukHour.format(now));
+  return alarm.enabled && hour >= alarm.from && hour < alarm.to;
+}
+
+// An alert with `alarm` set goes through the app's notification service extension, which also rings an
+// alarm that sounds through silent mode and Focus.
+const ringing = (alarm: boolean) => (alarm ? { 'mutable-content': 1 } : {});
+
+export function stockAlert(sightings: readonly Sighting[], alarm = false) {
   const stores = new Map<string, string[]>();
   for (const s of sightings) stores.set(s.part, [...(stores.get(s.part) ?? []), s.storeName]);
 
@@ -29,10 +47,22 @@ export function stockAlert(sightings: readonly Sighting[]) {
       sound: 'default',
       'interruption-level': 'time-sensitive',
       'thread-id': 'stock',
+      ...ringing(alarm),
     },
     url: first ? productUrl(first) : undefined,
+    ...(alarm && { alarm: true }),
   };
 }
+
+export const testAlert = (alarm: boolean) => ({
+  aps: {
+    alert: alarm ? { title: 'Muo Duo test alarm', body: 'This is how stock between your alarm hours will wake you.' } : { title: 'Muo Duo', body: "Test notification: you're all set." },
+    sound: 'default',
+    'interruption-level': 'time-sensitive',
+    ...ringing(alarm),
+  },
+  ...(alarm && { alarm: true }),
+});
 
 export const healthAlert = (title: string, body: string) => ({
   aps: { alert: { title, body }, sound: 'default', 'thread-id': 'health' },

@@ -1,3 +1,4 @@
+import AlarmKit
 import SwiftUI
 import UIKit
 
@@ -12,6 +13,7 @@ struct SettingsPage: View {
             if let status = model.status {
                 VStack(spacing: 16) {
                     AlertsCard(model: model, status: status)
+                    AlarmCard(model: model, status: status)
                     CheckingCard(model: model, status: status)
                     NotificationsCard(model: model, status: status)
                     AreasCard(status: status)
@@ -24,6 +26,7 @@ struct SettingsPage: View {
                 .padding(.bottom, 24)
                 .animation(.smooth, value: status.config.parts)
                 .animation(.smooth, value: status.config.paused)
+                .animation(.smooth, value: status.config.alarm)
             }
         }
         .scrollIndicators(.hidden)
@@ -122,6 +125,107 @@ private struct AlertChip: View {
             Text("You won't hear when it's in stock at any of the \(status.storeCount) stores.")
         }
         .accessibilityLabel("\(phone.name), \(watching ? "alerts on" : "alerts off")")
+    }
+}
+
+// MARK: - Alarm
+
+/// Restocks tend to land first thing, so stock found in the alarm hours rings like an alarm clock, through
+/// silent mode and Focus. The test is sent after a delay, so the phone can be locked to see it as it would be.
+private struct AlarmCard: View {
+    let model: StatusModel
+    let status: Status
+
+    @State private var permission = AlarmManager.shared.authorizationState
+    @State private var testResult: String?
+    @State private var sendingTest = false
+
+    private static let testDelay = 10
+
+    var body: some View {
+        let alarm = status.config.alarm
+        VStack(alignment: .leading, spacing: 8) {
+            CardHeader(title: "Alarm", symbol: "alarm", trailing: alarm.enabled ? alarm.hours : "Off")
+            VStack(spacing: 0) {
+                Toggle("Ring for stock first thing", isOn: Binding(
+                    get: { alarm.enabled },
+                    set: { on in Task { await model.setAlarm(on) } }
+                ))
+                .disabled(model.isWorking)
+                .padding(.vertical, 7)
+                Divider()
+                Row("Hours", value: "\(alarm.hours) UK")
+                Divider()
+                Row("Alarms on this iPhone") { permissionStatus }
+            }
+            switch permission {
+            case .notDetermined:
+                Button {
+                    Task { permission = (try? await AlarmManager.shared.requestAuthorization()) ?? permission }
+                } label: {
+                    Label("Allow Alarms", systemImage: "alarm.fill").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.large)
+                .padding(.top, 6)
+            case .denied:
+                Button {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                } label: {
+                    Label("Alarms are off. Turn them on", systemImage: "alarm.waves.left.and.right.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(.orange)
+                .controlSize(.large)
+                .padding(.top, 6)
+            default:
+                EmptyView()
+            }
+            Button {
+                sendingTest = true
+                Task {
+                    let result = await model.sendTestAlarm(in: Self.testDelay)
+                    withAnimation(.smooth) {
+                        testResult = result
+                        sendingTest = false
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if sendingTest {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "alarm")
+                    }
+                    Text("Test Alarm in \(Self.testDelay)s")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.glass)
+            .controlSize(.large)
+            .disabled(sendingTest || permission != .authorized)
+            .padding(.top, 6)
+            Text(testResult ?? "Stock found in these hours rings an alarm, even on silent. At other times it's a notification.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .contentTransition(.opacity)
+        }
+        .card()
+        .task {
+            for await state in AlarmManager.shared.authorizationUpdates { permission = state }
+        }
+    }
+
+    @ViewBuilder private var permissionStatus: some View {
+        switch permission {
+        case .authorized:
+            Label("Allowed", systemImage: "checkmark.circle.fill").labelStyle(TrailingIcon(color: .green))
+        case .denied:
+            Label("Off", systemImage: "exclamationmark.triangle.fill").labelStyle(TrailingIcon(color: .orange))
+        default:
+            Text("Not asked yet")
+        }
     }
 }
 

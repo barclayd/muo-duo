@@ -1,3 +1,4 @@
+import type { AlarmWindow } from './alerts';
 import { type Area, isKnownPart } from './catalog';
 import type { Config } from './checker';
 
@@ -34,9 +35,18 @@ function parseAreas(areas: unknown): Area[] | string {
   return parsed;
 }
 
+function parseAlarm(alarm: unknown): AlarmWindow | string {
+  const { enabled, from, to } = (alarm ?? {}) as Record<string, unknown>;
+  const hour = (h: unknown): h is number => Number.isInteger(h) && (h as number) >= 0 && (h as number) <= 24;
+  if (typeof enabled !== 'boolean' || !hour(from) || !hour(to) || from >= to) {
+    return 'alarm must be { enabled, from, to }, with from and to whole UK hours and from before to';
+  }
+  return { enabled, from, to };
+}
+
 function parseConfigPatch(body: unknown): Partial<Config> | string {
   if (typeof body !== 'object' || body === null) return 'Expected a JSON object';
-  const { parts, areas, intervalSeconds, paused } = body as Record<string, unknown>;
+  const { parts, areas, intervalSeconds, paused, alarm } = body as Record<string, unknown>;
   const patch: Partial<Config> = {};
 
   if (parts !== undefined) {
@@ -60,11 +70,16 @@ function parseConfigPatch(body: unknown): Partial<Config> | string {
     if (typeof paused !== 'boolean') return 'paused must be true or false';
     patch.paused = paused;
   }
+  if (alarm !== undefined) {
+    const parsed = parseAlarm(alarm);
+    if (typeof parsed === 'string') return parsed;
+    patch.alarm = parsed;
+  }
   return patch;
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     if (!authorised(req, env)) return json({ error: 'Unauthorised' }, 401);
 
     const stub = checker(env);
@@ -92,8 +107,17 @@ export default {
       case 'POST /check':
         return json(await stub.checkNow());
 
-      case 'POST /test-notification':
-        return json(await stub.sendTest());
+      case 'POST /test-notification': {
+        const { alarm = false, delaySeconds = 0 } = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+        if (typeof alarm !== 'boolean') return json({ error: 'alarm must be true or false' }, 400);
+        if (!Number.isInteger(delaySeconds) || (delaySeconds as number) < 0 || (delaySeconds as number) > 20) {
+          return json({ error: 'delaySeconds must be a whole number between 0 and 20' }, 400);
+        }
+        if (delaySeconds === 0) return json(await stub.sendTest(alarm));
+        // Sent after answering, so there's time to lock the phone first.
+        ctx.waitUntil(scheduler.wait((delaySeconds as number) * 1000).then(() => stub.sendTest(alarm)));
+        return json({ delivered: false, errors: [], sendsAt: new Date(Date.now() + (delaySeconds as number) * 1000).toISOString() }, 202);
+      }
 
       default:
         return json({ error: 'Not found' }, 404);

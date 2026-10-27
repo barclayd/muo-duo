@@ -7,6 +7,16 @@ struct Status: Decodable {
         let parts: [String]
         let intervalSeconds: Int
         let paused: Bool
+        let alarm: Alarm
+    }
+
+    /// Stock found between these UK hours also rings an alarm. From is included, to isn't.
+    struct Alarm: Codable, Equatable {
+        var enabled: Bool
+        let from: Int
+        let to: Int
+
+        var hours: String { String(format: "%02d:00–%02d:00", from, to) }
     }
 
     struct Health: Decodable {
@@ -62,14 +72,15 @@ struct Status: Decodable {
         let to: Date
     }
 
-    /// One request the Worker made to Apple.
+    /// One request the Worker made to Apple: about one model, or, with no part, about every watched model
+    /// at every store in the area.
     struct Check: Decodable, Identifiable, Hashable {
         let at: Date
         let area: String
-        let part: String
+        let part: String?
         let ok: Bool
         let ms: Int
-        var id: String { "\(at.timeIntervalSince1970)|\(area)|\(part)" }
+        var id: String { "\(at.timeIntervalSince1970)|\(area)|\(part ?? "")" }
     }
 
     /// Something for the stock log: a watched model coming into stock at a store or going again, or the
@@ -126,6 +137,12 @@ struct Status: Decodable {
         models.first { $0.part == part }
     }
 
+    /// What a check asked Apple about.
+    func subject(of check: Check) -> String {
+        guard let part = check.part else { return "Every store" }
+        return model(for: part)?.name ?? part
+    }
+
     func models(in finish: Finish) -> [Model] {
         models.filter { $0.finish == finish }
     }
@@ -158,6 +175,7 @@ enum LiveState: Equatable {
 struct ConfigPatch: Encodable {
     var parts: [String]?
     var paused: Bool?
+    var alarm: Status.Alarm?
 }
 
 struct TestResult: Decodable {

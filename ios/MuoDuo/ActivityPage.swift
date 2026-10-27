@@ -147,7 +147,7 @@ private struct CheckRow: View {
                 .foregroundStyle(check.ok ? finish.accent : .orange)
             VStack(alignment: .leading, spacing: 1) {
                 Text(check.area).font(.subheadline.weight(.semibold))
-                Text(status.model(for: check.part)?.name ?? check.part).font(.caption).foregroundStyle(.secondary)
+                Text(status.subject(of: check)).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 1) {

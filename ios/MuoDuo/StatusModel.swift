@@ -65,6 +65,12 @@ final class StatusModel {
         await perform { try await $0.updateConfig(ConfigPatch(parts: parts)) }
     }
 
+    func setAlarm(_ enabled: Bool) async {
+        guard var alarm = status?.config.alarm else { return }
+        alarm.enabled = enabled
+        await perform { try await $0.updateConfig(ConfigPatch(alarm: alarm)) }
+    }
+
     func register(deviceToken: Data) async {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
         do {
@@ -84,6 +90,16 @@ final class StatusModel {
         do {
             let result = try await api.sendTestNotification()
             return result.delivered ? "Sent. It should arrive in a few seconds." : "Not sent: \(result.errors.joined(separator: ", "))"
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Sent after a delay, so there's time to lock the phone and see it ring as it would at 6am.
+    func sendTestAlarm(in seconds: Int) async -> String {
+        do {
+            _ = try await api.sendTestNotification(alarm: true, delaySeconds: seconds)
+            return "Lock your iPhone now. The alarm should ring in about \(seconds) seconds."
         } catch {
             return error.localizedDescription
         }
