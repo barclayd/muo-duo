@@ -6,6 +6,30 @@ enum Pane: Hashable {
     case activity
 }
 
+/// How much room the app has, from the size of its window rather than the device.
+nonisolated enum Room {
+    /// Closed, or open in portrait: one column.
+    case narrow
+    /// Stood up like a tent, or any iPhone on its side: short, so home splits into two columns.
+    case tent
+    /// Open: room for home and a page side by side.
+    case wide
+
+    init(_ size: CGSize) {
+        if size.width > size.height, size.height < 520 {
+            self = .tent
+        } else if size.width >= 700 {
+            self = .wide
+        } else {
+            self = .narrow
+        }
+    }
+}
+
+extension EnvironmentValues {
+    @Entry var room = Room.narrow
+}
+
 /// Where the store map opens: on an area, or on a store that has stock, among the others that do.
 struct MapFocus: Hashable {
     var area: String?

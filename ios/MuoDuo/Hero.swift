@@ -6,29 +6,35 @@ struct Hero: View {
     let status: Status
     @Binding var finish: Finish
 
-    private static let width: CGFloat = 340
+    @Environment(\.room) private var room
+
+    /// Stood up like a tent, the hero is a column beside the cards rather than a banner above them.
+    private var tent: Bool { room == .tent }
+    private var width: CGFloat { tent ? 196 : 340 }
 
     var body: some View {
         let inStock = status.sightings.contains { status.model(for: $0.part)?.finish == finish }
-        VStack(spacing: 20) {
-            VStack(spacing: 6) {
+        VStack(spacing: tent ? 12 : 20) {
+            VStack(alignment: tent ? .leading : .center, spacing: tent ? 2 : 6) {
                 Text("iPhone Duo")
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
+                    .font(.system(size: tent ? 28 : 38, weight: .bold, design: .rounded))
                 headline
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(tent ? .leading : .center)
                     .contentTransition(.numericText())
             }
+            .frame(maxWidth: .infinity, alignment: tent ? .leading : .center)
             .padding(.top, 8)
 
             phone
-                .frame(width: Self.width, height: Self.width * 0.62)
+                .frame(width: width, height: width * 0.62)
                 .background {
                     Radar(color: inStock ? .green : finish.accent, trigger: model.pulses)
-                        .frame(width: 400, height: 400)
+                        .frame(width: width * 1.18, height: width * 1.18)
                 }
 
-            FinishPicker(selection: $finish, status: status)
+            FinishPicker(selection: $finish, status: status, axis: tent ? .vertical : .horizontal)
         }
         .frame(maxWidth: .infinity)
     }
@@ -50,9 +56,9 @@ struct Hero: View {
         ZStack {
             Ellipse()
                 .fill(.black.opacity(finish == .nightSky ? 0.5 : 0.22))
-                .frame(width: Self.width * 0.72, height: 18)
+                .frame(width: width * 0.72, height: 18)
                 .blur(radius: 14)
-                .offset(y: Self.width * 0.29)
+                .offset(y: width * 0.29)
 
             Group {
                 if let image = model.image(for: finish) {
@@ -66,7 +72,7 @@ struct Hero: View {
                 }
             }
             // Apple's shots have a lot of empty space above and below the phone; only the middle is laid out.
-            .frame(width: Self.width, height: Self.width * 1112 / 940)
+            .frame(width: width, height: width * 1112 / 940)
             .id(finish)
             .transition(.blurReplace.combined(with: .scale(0.94)))
         }
@@ -91,14 +97,18 @@ private struct Floating: ViewModifier {
     }
 }
 
-/// Night Sky / Star White, as glass capsules that light up in the selected colour.
+/// Night Sky / Star White, as glass capsules that light up in the selected colour. Side by side under the phone,
+/// or stacked full width in a column beside the cards.
 struct FinishPicker: View {
     @Binding var selection: Finish
     let status: Status
+    var axis = Axis.horizontal
 
     var body: some View {
+        let stacked = axis == .vertical
+        let layout = stacked ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 10))
         GlassEffectContainer(spacing: 10) {
-            HStack(spacing: 10) {
+            layout {
                 ForEach(Finish.allCases) { finish in
                     let selected = finish == selection
                     let inStock = status.sightings.contains { status.model(for: $0.part)?.finish == finish }
@@ -116,9 +126,12 @@ struct FinishPicker: View {
                                 Circle().fill(.green).frame(width: 7, height: 7)
                             }
                         }
+                        .frame(maxWidth: stacked ? .infinity : nil, alignment: .leading)
                         .foregroundStyle(selected ? .primary : .secondary)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 11)
+                        // Tapped from across the desk, so at least a full-size target.
+                        .frame(minHeight: stacked ? 44 : nil)
                         .contentShape(.capsule)
                     }
                     .buttonStyle(.plain)

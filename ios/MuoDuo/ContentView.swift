@@ -9,10 +9,14 @@ struct ContentView: View {
     @State private var showingLog = false
     @State private var pane: Pane?
     @State private var fullScreen = false
-    @State private var wide = false
+    @State private var room = Room.narrow
 
     /// Home's column on the open iPhone Duo. The page beside it gets the rest.
     private static let homeWidth: CGFloat = 400
+    /// The phone and its colours, stood up like a tent. The cards get the rest.
+    private static let tentHeroWidth: CGFloat = 220
+
+    private var wide: Bool { room == .wide }
 
     var body: some View {
         NavigationStack {
@@ -33,8 +37,10 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Open, iPhone Duo is wider than it is tall, with room for home and a page side by side.
-            .onGeometryChange(for: Bool.self) { $0.size.width >= 700 } action: { wide = $0 }
+            // Open, iPhone Duo is wider than it is tall, with room for home and a page side by side. Stood up like a
+            // tent it's wide but short.
+            .onGeometryChange(for: Room.self) { Room($0.size) } action: { room = $0 }
+            .environment(\.room, room)
             .background { Backdrop(finish: finish) }
             .navigationDestination(isPresented: $showingSettings) { SettingsPage(model: model, finish: finish) }
             .navigationDestination(isPresented: $showingLog) { StockLogPage(model: model, finish: finish) }
@@ -86,40 +92,76 @@ struct ContentView: View {
         }
     }
 
-    /// Narrow, everything. Open, the hero and anything urgent; the rest goes beside it.
+    /// Narrow, everything. Open, the hero and anything urgent; the rest goes beside it. Stood up like a tent, the
+    /// same cards in the same order, beside the hero rather than under it.
     private func home(_ status: Status) -> some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                Hero(model: model, status: status, finish: $finish)
-                    .padding(.bottom, 8)
-                // Straight under the colour picker, so a sighting is the first thing on screen.
-                InStockCard(model: model, status: status, finish: finish) { open(.map(MapFocus(store: $0))) }
-                HealthBanner(status: status, errorMessage: model.errorMessage)
-                if !wide || pane != nil {
-                    LastSeenCard(status: status, finish: finish)
+        Group {
+            if room == .tent {
+                HStack(alignment: .top, spacing: 16) {
+                    // Only scrolls if larger text pushes the picker off the bottom.
+                    ScrollView {
+                        Hero(model: model, status: status, finish: $finish)
+                            .padding(.bottom, 16)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    // The radar spreads past the column, behind the cards.
+                    .scrollClipDisabled()
+                    .frame(width: Self.tentHeroWidth)
+
+                    ScrollView {
+                        cards(status)
+                            .padding(.top, 8)
+                            .padding(.bottom, 16)
+                    }
+                    .refreshable { await model.refresh() }
+                    // Under the cards rather than across both columns, where it would cover the colour picker.
+                    .safeAreaInset(edge: .bottom) { ticker(status) }
                 }
-                if !wide {
-                    StockLogCard(status: status) { showingLog = true }
-                    StoresCard(model: model, status: status, finish: finish) { open(.map(MapFocus(area: $0))) }
-                    SlowedBanner(status: status)
+                .padding(.horizontal, 16)
+            } else {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        Hero(model: model, status: status, finish: $finish)
+                            .padding(.bottom, 8)
+                        cards(status)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
                 }
+                // Open, the bar holds nothing but the live badge, which brings its own glass. Cards scroll off the
+                // top rather than under a band of glass.
+                .scrollEdgeEffectHidden(wide, for: .top)
+                .refreshable { await model.refresh() }
+                .safeAreaInset(edge: .bottom) { ticker(status) }
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .animation(.smooth, value: model.errorMessage)
-            .animation(.smooth, value: status.state)
-            .animation(.smooth, value: status.sightings)
-            .sensoryFeedback(.success, trigger: status.sightings.count) { old, new in new > old }
         }
         .scrollIndicators(.hidden)
-        // Open, the bar holds nothing but the live badge, which brings its own glass. Cards scroll off the top
-        // rather than under a band of glass.
-        .scrollEdgeEffectHidden(wide, for: .top)
-        .refreshable { await model.refresh() }
-        .safeAreaInset(edge: .bottom) {
-            // Live activity open beside it already says what the ticker would.
-            if pane != .activity {
-                Ticker(model: model, status: status, finish: finish) { open(.activity) }
+        .animation(.smooth, value: model.errorMessage)
+        .animation(.smooth, value: status.state)
+        .animation(.smooth, value: status.sightings)
+        .sensoryFeedback(.success, trigger: status.sightings.count) { old, new in new > old }
+    }
+
+    @ViewBuilder private func ticker(_ status: Status) -> some View {
+        // Live activity open beside it already says what the ticker would.
+        if pane != .activity {
+            Ticker(model: model, status: status, finish: finish) { open(.activity) }
+        }
+    }
+
+    /// Under the hero, or beside it in a tent.
+    private func cards(_ status: Status) -> some View {
+        VStack(spacing: 16) {
+            // Straight under the colour picker, so a sighting is the first thing on screen.
+            InStockCard(model: model, status: status, finish: finish) { open(.map(MapFocus(store: $0))) }
+            HealthBanner(status: status, errorMessage: model.errorMessage)
+            if !wide || pane != nil {
+                LastSeenCard(status: status, finish: finish)
+            }
+            if !wide {
+                StockLogCard(status: status) { showingLog = true }
+                StoresCard(model: model, status: status, finish: finish) { open(.map(MapFocus(area: $0))) }
+                SlowedBanner(status: status)
             }
         }
     }

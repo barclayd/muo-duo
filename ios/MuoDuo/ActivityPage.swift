@@ -7,19 +7,43 @@ struct ActivityPage: View {
     let chrome: PageChrome
     let close: () -> Void
 
+    @Environment(\.room) private var room
+    /// The last check, big enough to read from across the desk.
+    @ScaledMetric(relativeTo: .largeTitle) private var glanceSize: CGFloat = 34
+
+    private var tent: Bool { room == .tent }
+
     var body: some View {
-        ScrollView {
-            if let status = model.status {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    VStack(spacing: 16) {
-                        summary(status, now: context.date)
-                        areas(status, now: context.date)
-                        feed(status, now: context.date)
+        Group {
+            if tent {
+                // Stood up like a tent: how it's going on the leading side, every request beside it.
+                HStack(alignment: .top, spacing: 16) {
+                    ScrollView {
+                        ticking { status, now in
+                            VStack(spacing: 16) {
+                                summary(status, now: now)
+                                areas(status, now: now)
+                            }
+                        }
+                    }
+                    .frame(width: 260)
+                    ScrollView {
+                        ticking { status, now in feed(status, now: now) }
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 24)
-                .readableWidth()
+            } else {
+                ScrollView {
+                    ticking { status, now in
+                        VStack(spacing: 16) {
+                            summary(status, now: now)
+                            areas(status, now: now)
+                            feed(status, now: now)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .readableWidth()
+                }
             }
         }
         .scrollIndicators(.hidden)
@@ -38,9 +62,22 @@ struct ActivityPage: View {
         }
     }
 
+    /// Every second, so each "ago" counts up.
+    @ViewBuilder private func ticking(@ViewBuilder _ content: @escaping (Status, Date) -> some View) -> some View {
+        if let status = model.status {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                content(status, context.date)
+            }
+            .padding(.bottom, 24)
+        }
+    }
+
     private func summary(_ status: Status, now: Date) -> some View {
         let answered = model.liveChecks.filter(\.ok)
         let average = answered.isEmpty ? nil : answered.reduce(0) { $0 + $1.ms } / answered.count
+        let last = model.liveChecks.first.map { ago($0.at, now: now) } ?? "–"
+        let pace = "every \(status.pace.intervalSeconds)s"
+        let answers = average.map { "\($0) ms" } ?? "–"
         return VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 LiveDot(color: status.state.color, trigger: model.pulses, size: 9)
@@ -52,10 +89,26 @@ struct ActivityPage: View {
                         .disabled(model.isWorking)
                 }
             }
-            HStack(alignment: .top) {
-                stat("Last check", value: model.liveChecks.first.map { ago($0.at, now: now) } ?? "–")
-                stat("Each size, each area", value: "every \(status.pace.intervalSeconds)s")
-                stat("Apple answers in", value: average.map { "\($0) ms" } ?? "–")
+            if tent {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(last)
+                        .font(.system(size: glanceSize, weight: .bold, design: .rounded))
+                        .foregroundStyle(status.state == .live ? Color.green : .primary)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                    Text("Last check").font(.subheadline).foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                VStack(spacing: 8) {
+                    row("Each size, each area", value: pace)
+                    row("Apple answers in", value: answers)
+                }
+            } else {
+                HStack(alignment: .top) {
+                    stat("Last check", value: last)
+                    stat("Each size, each area", value: pace)
+                    stat("Apple answers in", value: answers)
+                }
             }
         }
         .card()
@@ -79,6 +132,16 @@ struct ActivityPage: View {
             Text(title).font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func row(_ title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Text(value).fontWeight(.semibold).monospacedDigit().contentTransition(.numericText())
+        }
+        .font(.subheadline)
         .accessibilityElement(children: .combine)
     }
 
