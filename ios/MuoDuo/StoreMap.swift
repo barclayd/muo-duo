@@ -1,58 +1,68 @@
 import MapKit
 import SwiftUI
 
-/// Every watched store, full screen. Area chips fly the camera between London, the south and Manchester.
+/// Every watched store. Area chips fly the camera between London, the south and Manchester.
 struct StoreMap: View {
     let model: StatusModel
     let finish: Finish
-    @State var focus: String?
+    let chrome: PageChrome
+    let close: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
+    @State private var focus: String?
+    /// Opened from a sighting: the stores with stock, until an area is picked.
+    @State private var stock: Bool
     @State private var position: MapCameraPosition = .automatic
     @State private var selected: String?
     @Namespace private var chips
 
+    init(model: StatusModel, finish: Finish, focus: MapFocus, chrome: PageChrome, close: @escaping () -> Void) {
+        self.model = model
+        self.finish = finish
+        self.chrome = chrome
+        self.close = close
+        _focus = State(initialValue: focus.area)
+        _stock = State(initialValue: focus.store != nil)
+        _selected = State(initialValue: focus.store)
+    }
+
     var body: some View {
         if let status = model.status {
-            NavigationStack {
-                Map(position: $position, selection: $selected) {
-                    ForEach(status.pins) { pin in
-                        Annotation(pin.store.name, coordinate: pin.coordinate) {
-                            StorePin(pin: pin, status: status, color: finish.accent, pulse: model.areaPulses[pin.area] ?? 0, selected: selected == pin.id)
-                        }
-                        .tag(pin.id)
+            Map(position: $position, selection: $selected) {
+                ForEach(status.pins) { pin in
+                    Annotation(pin.store.name, coordinate: pin.coordinate) {
+                        StorePin(pin: pin, status: status, color: finish.accent, pulse: model.areaPulses[pin.area] ?? 0, selected: selected == pin.id)
                     }
+                    .tag(pin.id)
                 }
-                .mapStyle(.standard(elevation: .realistic, emphasis: .muted, pointsOfInterest: .excludingAll))
-                .mapControls { MapCompass() }
-                .ignoresSafeArea()
-                .navigationTitle(title(status))
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button(role: .close) { dismiss() }
-                    }
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 12) {
-                        if let pin = status.pins.first(where: { $0.id == selected }) {
-                            StoreDetail(pin: pin, status: status, finish: finish)
-                                .padding(.horizontal, 16)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
-                        areaChips(status)
-                    }
-                    .padding(.bottom, 8)
-                    .animation(.smooth, value: selected)
-                }
-                .onAppear { fly(to: focus, in: status, animated: false) }
-                .sensoryFeedback(.selection, trigger: selected)
             }
+            .mapStyle(.standard(elevation: .realistic, emphasis: .muted, pointsOfInterest: .excludingAll))
+            .mapControls { MapCompass() }
+            .ignoresSafeArea()
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 12) {
+                    if let pin = status.pins.first(where: { $0.id == selected }) {
+                        // On the open iPhone Duo the map is wide; the card stays phone-sized at the leading edge.
+                        StoreDetail(pin: pin, status: status, finish: finish)
+                            .frame(maxWidth: 420)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    areaChips(status)
+                }
+                .padding(.bottom, 8)
+                .animation(.smooth, value: selected)
+            }
+            .pageChrome(chrome, title: title(status), close: close)
+            .onAppear { fly(to: focus, stock: stock, in: status, animated: false) }
+            .sensoryFeedback(.selection, trigger: selected)
         }
     }
 
     private func title(_ status: Status) -> String {
-        focus.flatMap { id in status.areas.first { $0.id == id }?.name } ?? "\(status.storeCount) Apple Stores"
+        let stocked = Set(status.sightings.map(\.storeNumber)).count
+        if stock, stocked > 0 { return stocked == 1 ? "1 store with stock" : "\(stocked) stores with stock" }
+        return focus.flatMap { id in status.areas.first { $0.id == id }?.name } ?? "\(status.storeCount) Apple Stores"
     }
 
     private func areaChips(_ status: Status) -> some View {
@@ -72,9 +82,12 @@ struct StoreMap: View {
     }
 
     private func chip(_ name: String, id: String?, status: Status) -> some View {
-        let selected = focus == id
+        let selected = !stock && focus == id
         return Button {
-            withAnimation(.smooth) { focus = id }
+            withAnimation(.smooth) {
+                focus = id
+                stock = false
+            }
             self.selected = nil
             fly(to: id, in: status, animated: true)
         } label: {
@@ -90,8 +103,11 @@ struct StoreMap: View {
         .glassEffect(selected ? .regular.tint(finish.accent.opacity(0.4)).interactive() : .regular.interactive(), in: .capsule)
     }
 
-    private func fly(to area: String?, in status: Status, animated: Bool) {
-        let coordinates = status.pins.filter { pin in area.map { status.area(of: pin.id)?.id == $0 } ?? true }.map(\.coordinate)
+    private func fly(to area: String?, stock: Bool = false, in status: Status, animated: Bool) {
+        let stocked = Set(status.sightings.map(\.storeNumber))
+        let coordinates = status.pins.filter { pin in
+            stock ? stocked.contains(pin.id) : area.map { status.area(of: pin.id)?.id == $0 } ?? true
+        }.map(\.coordinate)
         guard let region = MKCoordinateRegion(fitting: coordinates) else { return }
         if animated {
             withAnimation(.smooth(duration: 1.2)) { position = .region(region) }

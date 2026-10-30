@@ -90,6 +90,8 @@ struct InStockCard: View {
     let model: StatusModel
     let status: Status
     let finish: Finish
+    /// Shows a store on the map.
+    let open: (String) -> Void
 
     var body: some View {
         if !status.sightings.isEmpty {
@@ -105,7 +107,7 @@ struct InStockCard: View {
                 ForEach(Array(groups.enumerated()), id: \.element.part) { index, group in
                     if index > 0 { Divider() }
                     if let phone = status.model(for: group.part) {
-                        InStockModel(model: model, status: status, phone: phone, sightings: group.sightings)
+                        InStockModel(model: model, status: status, phone: phone, sightings: group.sightings, open: open)
                     }
                 }
             }
@@ -139,6 +141,7 @@ private struct InStockModel: View {
     let status: Status
     let phone: Status.Model
     let sightings: [Status.Sighting]
+    let open: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -160,7 +163,9 @@ private struct InStockModel: View {
 
             VStack(spacing: 12) {
                 ForEach(sightings, id: \.storeNumber) { sighting in
-                    store(sighting)
+                    Button { open(sighting.storeNumber) } label: { store(sighting) }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Shows it on the map")
                 }
             }
 
@@ -219,6 +224,7 @@ private struct InStockModel: View {
                 }
             }
         }
+        .contentShape(.rect)
         .accessibilityElement(children: .combine)
     }
 
