@@ -1,7 +1,8 @@
 import MapKit
 import SwiftUI
 
-/// Every watched store. Area chips fly the camera between London, the south and Manchester.
+/// Every watched store. Area chips fly the camera between London, the south and Manchester. Stood up like a tent,
+/// the map takes the whole screen, the store floats in the corner and the areas move into a menu.
 struct StoreMap: View {
     let model: StatusModel
     let finish: Finish
@@ -14,6 +15,7 @@ struct StoreMap: View {
     @State private var position: MapCameraPosition = .automatic
     @State private var selected: String?
     @Namespace private var chips
+    @Environment(\.room) private var room
 
     init(model: StatusModel, finish: Finish, focus: MapFocus, chrome: PageChrome, close: @escaping () -> Void) {
         self.model = model
@@ -38,22 +40,50 @@ struct StoreMap: View {
             .mapStyle(.standard(elevation: .realistic, emphasis: .muted, pointsOfInterest: .excludingAll))
             .mapControls { MapCompass() }
             .ignoresSafeArea()
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(spacing: 12) {
-                    if let pin = status.pins.first(where: { $0.id == selected }) {
-                        // On the open iPhone Duo the map is wide; the card stays phone-sized at the leading edge.
-                        StoreDetail(pin: pin, status: status, finish: finish)
-                            .frame(maxWidth: 420)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+            // Both always applied, one of them empty, so standing the phone up doesn't rebuild the map.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if room == .tent {
+                    HStack(alignment: .top, spacing: 12) {
+                        heading(status)
+                        Spacer(minLength: 0)
+                        if let pin = selectedPin(status) {
+                            StoreDetail(pin: pin, status: status, finish: finish)
+                                .frame(width: 260)
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
                     }
-                    areaChips(status)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .animation(.smooth, value: selected)
                 }
-                .padding(.bottom, 8)
-                .animation(.smooth, value: selected)
             }
-            .pageChrome(chrome, title: title(status), close: close)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if room != .tent {
+                    VStack(spacing: 12) {
+                        if let pin = selectedPin(status) {
+                            // On the open iPhone Duo the map is wide; the card stays phone-sized at the leading edge.
+                            StoreDetail(pin: pin, status: status, finish: finish)
+                                .frame(maxWidth: 420)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                        areaChips(status)
+                    }
+                    .padding(.bottom, 8)
+                    .animation(.smooth, value: selected)
+                }
+            }
+            // Stood up like a tent, the heading over the map has the title, so the bar doesn't repeat it.
+            .pageChrome(chrome, title: room == .tent ? "" : title(status), close: close)
+            .toolbar {
+                // Too short for the chips along the bottom, so the areas go in the rail.
+                if room == .tent {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        areaMenu(status)
+                    }
+                }
+            }
             .onAppear { fly(to: focus, stock: stock, in: status, animated: false) }
             .sensoryFeedback(.selection, trigger: selected)
         }
@@ -63,6 +93,47 @@ struct StoreMap: View {
         let stocked = Set(status.sightings.map(\.storeNumber)).count
         if stock, stocked > 0 { return stocked == 1 ? "1 store with stock" : "\(stocked) stores with stock" }
         return focus.flatMap { id in status.areas.first { $0.id == id }?.name } ?? "\(status.storeCount) Apple Stores"
+    }
+
+    private func selectedPin(_ status: Status) -> Pin? {
+        status.pins.first { $0.id == selected }
+    }
+
+    /// The title in glass over the map, where there's no bar for it.
+    private func heading(_ status: Status) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title(status)).font(.title3.weight(.bold))
+            if let subtitle = subtitle(status) {
+                Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private func subtitle(_ status: Status) -> String? {
+        if stock { return nil }
+        guard let area = status.areas.first(where: { $0.id == focus }) else { return "in \(status.areas.count) areas" }
+        return "\(area.stores.count) stores near \(area.search)"
+    }
+
+    private func areaMenu(_ status: Status) -> some View {
+        let area = Binding<String?> {
+            stock ? "" : focus
+        } set: { id in
+            pick(id, in: status)
+        }
+        return Menu("Area", systemImage: "line.3.horizontal.decrease") {
+            Picker("Area", selection: area) {
+                Text("All").tag(String?.none)
+                ForEach(status.areas) { area in
+                    Text(area.name).tag(Optional(area.id))
+                }
+            }
+        }
     }
 
     private func areaChips(_ status: Status) -> some View {
@@ -84,12 +155,7 @@ struct StoreMap: View {
     private func chip(_ name: String, id: String?, status: Status) -> some View {
         let selected = !stock && focus == id
         return Button {
-            withAnimation(.smooth) {
-                focus = id
-                stock = false
-            }
-            self.selected = nil
-            fly(to: id, in: status, animated: true)
+            pick(id, in: status)
         } label: {
             Text(name)
                 .font(.subheadline.weight(selected ? .semibold : .medium))
@@ -101,6 +167,15 @@ struct StoreMap: View {
         .buttonStyle(.plain)
         .foregroundStyle(selected ? .primary : .secondary)
         .glassEffect(selected ? .regular.tint(finish.accent.opacity(0.4)).interactive() : .regular.interactive(), in: .capsule)
+    }
+
+    private func pick(_ area: String?, in status: Status) {
+        withAnimation(.smooth) {
+            focus = area
+            stock = false
+        }
+        selected = nil
+        fly(to: area, in: status, animated: true)
     }
 
     private func fly(to area: String?, stock: Bool = false, in status: Status, animated: Bool) {

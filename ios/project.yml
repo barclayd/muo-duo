@@ -44,7 +44,7 @@ targets:
       properties:
         CFBundleDisplayName: Muo Duo
         UILaunchScreen: {}
-        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         MuoDuoAPIBaseURL: $(MUODUO_API_BASE_URL)
         MuoDuoAPIToken: $(MUODUO_API_TOKEN)
         NSAlarmKitUsageDescription: Stock found in your alarm hours rings an alarm, so a restock wakes you.
