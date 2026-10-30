@@ -68,6 +68,8 @@ private struct PageChromeModifier: ViewModifier {
                     PaneControls(title: title, fullScreen: fullScreen, close: close)
                 }
             }
+            // The controls bring their own glass, so the page scrolls off the top like home beside it.
+            .scrollEdgeEffectHidden(!chrome.isBar, for: .top)
     }
 }
 

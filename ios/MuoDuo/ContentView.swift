@@ -112,6 +112,9 @@ struct ContentView: View {
             .sensoryFeedback(.success, trigger: status.sightings.count) { old, new in new > old }
         }
         .scrollIndicators(.hidden)
+        // Open, the bar holds nothing but the live badge, which brings its own glass. Cards scroll off the top
+        // rather than under a band of glass.
+        .scrollEdgeEffectHidden(wide, for: .top)
         .refreshable { await model.refresh() }
         .safeAreaInset(edge: .bottom) {
             // Live activity open beside it already says what the ticker would.
@@ -134,6 +137,7 @@ struct ContentView: View {
             .padding(.bottom, 16)
         }
         .scrollIndicators(.hidden)
+        .scrollEdgeEffectHidden(true, for: .top)
         .refreshable { await model.refresh() }
     }
 
