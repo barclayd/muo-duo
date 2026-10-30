@@ -1,45 +1,41 @@
 import SwiftUI
 
-/// Full screen from the ticker: each area as it's checked, and every request the Worker has just made to
-/// Apple, as it happens.
+/// From the ticker: each area as it's checked, and every request the Worker has just made to Apple, as it happens.
 struct ActivityPage: View {
     let model: StatusModel
     let finish: Finish
-
-    @Environment(\.dismiss) private var dismiss
+    let chrome: PageChrome
+    let close: () -> Void
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                if let status = model.status {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        VStack(spacing: 16) {
-                            summary(status, now: context.date)
-                            areas(status, now: context.date)
-                            feed(status, now: context.date)
-                        }
+        ScrollView {
+            if let status = model.status {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    VStack(spacing: 16) {
+                        summary(status, now: context.date)
+                        areas(status, now: context.date)
+                        feed(status, now: context.date)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 24)
                 }
-            }
-            .scrollIndicators(.hidden)
-            .background { Backdrop(finish: finish) }
-            .navigationTitle("Live activity")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if let status = model.status {
-                    ToolbarItem(placement: .topBarLeading) {
-                        LiveBadge(model: model, status: status)
-                    }
-                    .sharedBackgroundVisibility(.hidden)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(role: .close) { dismiss() }
-                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
+                .readableWidth()
             }
         }
-        .preferredColorScheme(finish.colorScheme)
+        .scrollIndicators(.hidden)
+        // Beside home, home's sky is already behind it.
+        .background {
+            if chrome.isBar { Backdrop(finish: finish) }
+        }
+        .pageChrome(chrome, title: "Live activity", close: close)
+        .toolbar {
+            if chrome.isBar, let status = model.status {
+                ToolbarItem(placement: .topBarLeading) {
+                    LiveBadge(model: model, status: status)
+                }
+                .sharedBackgroundVisibility(.hidden)
+            }
+        }
     }
 
     private func summary(_ status: Status, now: Date) -> some View {

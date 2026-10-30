@@ -29,6 +29,7 @@ struct SettingsPage: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
+                .readableWidth()
                 .animation(.smooth, value: status.device)
                 .animation(.smooth, value: status.config.paused)
             }
