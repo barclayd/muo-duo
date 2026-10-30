@@ -86,6 +86,7 @@ struct StockLogPage: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 24)
+                .readableWidth()
                 .animation(.smooth, value: status.log.first?.id)
             }
         }
