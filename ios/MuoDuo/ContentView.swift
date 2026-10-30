@@ -53,6 +53,7 @@ struct ContentView: View {
                     }
                 }
             }
+            .barStaysPut(wide)
         }
         .preferredColorScheme(finish.colorScheme)
         // The Worker does the checking; the app only watches while it's on screen.

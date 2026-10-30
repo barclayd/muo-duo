@@ -33,6 +33,16 @@ extension View {
     func readableWidth() -> some View {
         frame(maxWidth: 640).frame(maxWidth: .infinity)
     }
+
+    /// Open, home and the page beside it share the bar. Left to shrink as one of them scrolls, it would take the
+    /// other's top edge and the live badge with it.
+    @ViewBuilder func barStaysPut(_ staysPut: Bool) -> some View {
+        if #available(iOS 27.0, *) {
+            toolbarMinimizationBehavior(staysPut ? .never : .automatic, for: .navigationBar)
+        } else {
+            self
+        }
+    }
 }
 
 /// Both kinds of chrome are always applied, one of them empty, so folding or unfolding the phone doesn't rebuild
